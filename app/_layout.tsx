@@ -4,9 +4,11 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PhotoProvider } from '../contexts/PhotoContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ONBOARDING_COMPLETED_KEY } from './onboarding';
-import { AUTH_TOKEN_KEY } from './(auth)/login';
-import { PERMISSIONS_GRANTED_KEY } from './permissions';
+import { 
+    AUTH_TOKEN_KEY, 
+    ONBOARDING_COMPLETED_KEY, 
+    PERMISSIONS_GRANTED_KEY 
+} from '../lib/firebase';
 import { useState, useEffect } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';

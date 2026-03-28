@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import { ActionSheetIOS, Platform, LogBox } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AUTH_TOKEN_KEY } from '../lib/firebase';
 import { Photo } from '../constants/photos';
 
 // Suppress known non-critical library warnings from being visible to user
@@ -133,13 +134,12 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                 setIsLoading(false);
             }
 
-            // Load persistent bin + stats
             try {
                 const [storedBin, storedTotal, storedCount, storedToken] = await Promise.all([
                     AsyncStorage.getItem(BIN_STORAGE_KEY),
                     AsyncStorage.getItem(TOTAL_CLEARED_KEY),
                     AsyncStorage.getItem(TOTAL_DELETED_KEY),
-                    AsyncStorage.getItem('@auth_token_v1')
+                    AsyncStorage.getItem(AUTH_TOKEN_KEY)
                 ]);
                 if (storedBin) setBinPhotos(JSON.parse(storedBin));
                 if (storedTotal) setTotalClearedBytes(parseInt(storedTotal, 10));
