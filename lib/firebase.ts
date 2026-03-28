@@ -1,8 +1,7 @@
-import 'react-native-get-random-values';
 import { initializeApp, getApp, getApps } from 'firebase/app';
-import { getAuth, initializeAuth, getReactNativePersistence } from 'firebase/auth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAuth } from 'firebase/auth';
 
+// Your web app's Firebase configuration
 const firebaseConfig = {
     apiKey: "AIzaSyBV7kIh8wXvBsY6ZWRMc8jqtT38XScs1u4",
     authDomain: "swipe-to-wipe.firebaseapp.com",
@@ -13,23 +12,11 @@ const firebaseConfig = {
     measurementId: "G-QD6DNG6V0Y"
 };
 
-let app;
-if (!getApps().length) {
-    app = initializeApp(firebaseConfig);
-} else {
-    app = getApp();
-}
+// Initialize Firebase (singleton pattern)
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-let auth;
-try {
-    // Try to get existing auth first to avoid double initialization
-    auth = getAuth(app);
-} catch (e) {
-    // If not registered yet, initialize it
-    auth = initializeAuth(app, {
-        persistence: getReactNativePersistence(AsyncStorage)
-    });
-}
+// Initialize Auth using the default provider for React Native
+const auth = getAuth(app);
 
 export { auth };
 export default app;
