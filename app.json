@@ -39,6 +39,7 @@
         ]
       },
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "PhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
         "PhotoLibraryAddUsageDescription": "Swipe to Wipe needs permission to save recovered photos back to your gallery."
       }
@@ -67,7 +68,16 @@
           "savePhotosPermission": "Allow Swipe to Wipe to save recovered photos.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-4536210339227120~9591461461",
+          "iosAppId": "ca-app-pub-4536210339227120~6519111811"
+        }
+      ],
+      "expo-localization",
+      "expo-asset"
     ],
     "extra": {
       "router": {

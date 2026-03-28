@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, Dimensions } from 'react-native';
 import { Image } from 'expo-image';
+import * as MediaLibrary from 'expo-media-library';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
     useAnimatedStyle,
@@ -11,6 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Photo } from '../constants/photos';
 import { Ionicons } from '@expo/vector-icons';
+import { useVideoPlayer, VideoView } from 'expo-video';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.3;
@@ -24,6 +26,30 @@ interface SwipeCardProps {
 }
 
 export default function SwipeCard({ photo, index, totalVisible, translateX, isTop }: SwipeCardProps) {
+    const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
+    const player = useVideoPlayer(photo.mediaType === 'video' ? (resolvedVideoUri || photo.uri) : null, (p) => {
+        p.loop = true;
+        p.muted = true;
+    });
+
+    useEffect(() => {
+        if (isTop && resolvedVideoUri) {
+            player.play();
+        } else {
+            player.pause();
+        }
+    }, [isTop, resolvedVideoUri, player]);
+
+    useEffect(() => {
+        if (photo.mediaType === 'video' && !resolvedVideoUri) {
+            MediaLibrary.getAssetInfoAsync(photo.id).then(info => {
+                setResolvedVideoUri(info.localUri || info.uri);
+            }).catch(err => {
+                console.warn('Failed to resolve video URI:', err);
+            });
+        }
+    }, [photo.id, photo.mediaType]);
+
 
     const cardStyle = useAnimatedStyle(() => {
         if (!isTop) {
@@ -114,11 +140,12 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
         return { backgroundColor: isRight ? '#22c55e' : '#ef4444' };
     });
 
-    const formatDuration = (ms: number) => {
-        const totalSeconds = Math.floor(ms / 1000);
+    const formatDuration = (seconds?: number) => {
+        if (!seconds) return '0:00';
+        const totalSeconds = Math.floor(seconds);
         const minutes = Math.floor(totalSeconds / 60);
-        const seconds = totalSeconds % 60;
-        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        const secs = totalSeconds % 60;
+        return `${minutes}:${secs.toString().padStart(2, '0')}`;
     };
 
     const formatBytes = (bytes?: number) => {
@@ -129,12 +156,21 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
 
     return (
         <Animated.View style={[styles.card, cardStyle]}>
-            <Image
-                source={photo.url}
-                style={styles.image}
-                contentFit="cover"
-                transition={150}
-            />
+            {photo.mediaType === 'video' ? (
+                <VideoView
+                    player={player}
+                    style={styles.image}
+                    contentFit="cover"
+                    nativeControls={false}
+                />
+            ) : (
+                <Image
+                    source={photo.url}
+                    style={styles.image}
+                    contentFit="cover"
+                    transition={150}
+                />
+            )}
             <LinearGradient
                 colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.75)']}
                 locations={[0.4, 0.7, 1]}

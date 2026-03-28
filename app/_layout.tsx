@@ -12,6 +12,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { Syne_700Bold, Syne_800ExtraBold } from '@expo-google-fonts/syne';
 import { DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
+import { initAds } from '../lib/ads';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -30,14 +31,8 @@ export default function RootLayout() {
 
     useEffect(() => {
         async function prepare() {
-            try {
-                // DEEP RESET (One-time): This ensures you start from the very beginning of the NEW 4-step flow!
-                await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, ONBOARDING_COMPLETED_KEY, PERMISSIONS_GRANTED_KEY]);
-            } catch (e) {
-                console.error(e);
-            } finally {
-                setIsReady(true);
-            }
+            await initAds();
+            setIsReady(true);
         }
         prepare();
     }, []);

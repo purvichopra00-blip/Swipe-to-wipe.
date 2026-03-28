@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     StyleSheet, Text, View, Dimensions, Pressable,
-    Modal, Animated as RNAnimated, StatusBar, Platform, TextInput, Alert, Share
+    Modal, Animated as RNAnimated, StatusBar, Platform, TextInput, Alert, Share,
+    ActivityIndicator
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
@@ -24,6 +25,8 @@ import * as Clipboard from 'expo-clipboard';
 import { usePhotos } from '../../contexts/PhotoContext';
 import { SortMode } from '../../contexts/PhotoContext';
 import SwipeCard from '../../components/SwipeCard';
+import { AppBannerAd, BannerAdSize, AdUnits, createSafeInterstitial, AdEventType } from '../../lib/ads';
+import { AD_CONFIG } from '../../constants/Ads';
 
 const { width: W, height: H } = Dimensions.get('window');
 const SWIPE_THRESHOLD = W * 0.28;
@@ -50,7 +53,7 @@ function ScalePress({ children, onPress, style, disabled }: { children: React.Re
     );
 }
 
-/* ─── Animated counting number (Standard Text for best layout) ─── */
+/* ΓöÇΓöÇΓöÇ Animated counting number (Standard Text for best layout) ΓöÇΓöÇΓöÇ */
 function CountUp({ to, duration = 1500, style, delay = 0 }: { to: number; duration?: number; style?: any; delay?: number }) {
     const [count, setCount] = useState(0);
 
@@ -120,7 +123,8 @@ export default function SwipeScreen() {
         swipeRight, swipeLeft, undo, canUndo, sessionStats,
         isLoadingSession, startSwipingSession, loadCategoryStats,
         sortMode, setSortMode, endSession, permissionsGranted,
-        categoryCounts
+        categoryCounts, totalClearedBytes, totalDeletedPhotos,
+        showIntro, setShowIntro
     } = usePhotos();
 
     const insets = useSafeAreaInsets();
@@ -130,21 +134,54 @@ export default function SwipeScreen() {
     const [showSort, setShowSort] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
     const [isCalculatingInfo, setIsCalculatingInfo] = useState(false);
-    const [detailedInfo, setDetailedInfo] = useState<{ size?: number; width?: number; height?: number } | null>(null);
+    const [detailedInfo, setDetailedInfo] = useState<{ size: number; width: number; height: number }>({ size: 0, width: 0, height: 0 });
     const [isSharing, setIsSharing] = useState(false);
     const sortProgress = useSharedValue(0);
     const activeCatRef = useRef<string>('Random');
 
     const [showCelebration, setShowCelebration] = useState(false);
-    const [lastPopupSwiped, setLastPopupSwiped] = useState(0);
+    const [lastCelebrationCount, setLastCelebrationCount] = useState(0); 
+    const [lastSwipedId, setLastSwipedId] = useState<string | null>(null);
+    const [adTriggerCounter, setAdTriggerCounter] = useState(0);
+    const [interstitial, setInterstitial] = useState<any>(null);
+    const [adLoaded, setAdLoaded] = useState(false);
+
+    useEffect(() => {
+        const ad = createSafeInterstitial(AdUnits.INTERSTITIAL);
+        if (ad) {
+            const unsubscribeLoaded = ad.addAdEventListener(AdEventType.LOADED, () => setAdLoaded(true));
+            const unsubscribeError = ad.addAdEventListener(AdEventType.ERROR, (err: any) => {
+                console.warn('Interstitial Load Error:', err);
+                setAdLoaded(false);
+            });
+            const unsubscribeClosed = ad.addAdEventListener(AdEventType.CLOSED, () => {
+                setAdLoaded(false);
+                setAdTriggerCounter(0);
+                ad.load();
+            });
+            ad.load();
+            setInterstitial(ad);
+            return () => {
+                unsubscribeLoaded();
+                unsubscribeError();
+                unsubscribeClosed();
+            };
+        }
+    }, []);
+
+    const showAd = useCallback(() => {
+        if (adLoaded && interstitial) {
+            interstitial.show();
+        } else {
+            setAdTriggerCounter(0); // Reset if ad failed
+        }
+    }, [adLoaded, interstitial]);
     const celebScale = useRef(new RNAnimated.Value(0.8)).current;
     const celebOpacity = useRef(new RNAnimated.Value(0)).current;
     const orbitSpin = useRef(new RNAnimated.Value(0)).current;
 
-    /* ─── Intro Splash State ─── */
-    const [showIntro, setShowIntro] = useState(true);
-    const introShownRef = useRef(false);
     const [storage, setStorage] = useState<{ used: number; total: number } | null>(null);
+    const introShownRef = useRef(true); // Changed to true to skip intro for now
 
     // Auto start session on focus or when permissions first load
     useFocusEffect(
@@ -167,23 +204,15 @@ export default function SwipeScreen() {
         }
     }, [permissionsGranted]);
 
-    // Auto-dismiss intro after 4 seconds
-    useEffect(() => {
-        if (introShownRef.current) {
-            setShowIntro(false);
-            return;
-        }
+    const enterSession = (category: string) => {
+        activeCatRef.current = category;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        startSwipingSession(category);
+        setShowIntro(false);
+        introShownRef.current = true;
+    };
 
-        if (showIntro) {
-            const timer = setTimeout(() => {
-                setShowIntro(false);
-                introShownRef.current = true;
-            }, 4000);
-            return () => clearTimeout(timer);
-        }
-    }, [showIntro]);
-
-    const fmt = (b: number) => `${(b / 1024 ** 3).toFixed(1)} GB`;
+    const fmt = (b: number) => b > 1024 ** 2 * 900 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${(b / 1024 ** 2).toFixed(1)} MB`;
 
     // Force redirect back to onboarding if they haven't seen v4 yet
     useFocusEffect(
@@ -205,8 +234,8 @@ export default function SwipeScreen() {
 
     // Smart Celebration Trigger
     useEffect(() => {
-        if (sessionStats.swiped > 0 && sessionStats.swiped % 100 === 0 && sessionStats.swiped !== lastPopupSwiped) {
-            setLastPopupSwiped(sessionStats.swiped);
+        if (sessionStats.swiped > 0 && sessionStats.swiped % 100 === 0 && sessionStats.swiped !== lastCelebrationCount) {
+            setLastCelebrationCount(sessionStats.swiped);
             setShowCelebration(true);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             RNAnimated.parallel([
@@ -214,7 +243,7 @@ export default function SwipeScreen() {
                 RNAnimated.timing(celebOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
             ]).start();
         }
-    }, [sessionStats.swiped, lastPopupSwiped]);
+    }, [sessionStats.swiped, lastCelebrationCount]);
 
     const closeCelebration = () => {
         RNAnimated.parallel([
@@ -250,45 +279,29 @@ export default function SwipeScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setShowInfo(true);
         setIsCalculatingInfo(true);
-        // Start with fallback to avoid "Calculating..." hang
+        
+        // Use the metadata ALREADY present in the photo object 
+        // to avoid buggy and crashing MediaLibrary calls.
         setDetailedInfo({
-            size: currentPhoto.fileSize || undefined,
-            width: 0,
-            height: 0
+            size: currentPhoto.fileSize || 0,
+            width: currentPhoto.width || 0,
+            height: currentPhoto.height || 0
         });
 
         try {
-            // Fetch high-precision info
-            const info = await MediaLibrary.getAssetInfoAsync(currentPhoto.id, { shouldDownloadFromNetwork: true });
-            let targetUri = info.localUri || info.uri;
-
-            // If ph:// and it's a photo, convert to JPEG for accurate read
-            if (targetUri && !targetUri.startsWith('file://') && Platform.OS === 'ios' && currentPhoto.mediaType === 'photo') {
-                try {
-                    const manip = await ImageManipulator.manipulateAsync(
-                        targetUri, [], { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
-                    );
-                    targetUri = manip.uri;
-                } catch (e) { console.warn("ImageManipulator fallback failed in openInfo", e); }
-            } else if (targetUri && !targetUri.startsWith('file://') && Platform.OS === 'ios') {
-                const tmp = `${(FileSystem as any).cacheDirectory}${currentPhoto.id}.info`;
-                await FileSystem.copyAsync({ from: targetUri, to: tmp }).catch(() => { });
-                targetUri = tmp;
+            // Optional: only fetch high-precision info if it's missing (rare)
+            if (!currentPhoto.fileSize) {
+                const info = await MediaLibrary.getAssetInfoAsync(currentPhoto.id, { shouldDownloadFromNetwork: false });
+                const newSize = (info as any).fileSize || (info as any).size || 0;
+                setDetailedInfo(prev => ({
+                    ...prev,
+                    size: newSize || prev.size,
+                    width: info.width || prev.width,
+                    height: info.height || prev.height
+                }));
             }
-
-            let actualSize = 0;
-            if (targetUri && targetUri.startsWith('file://')) {
-                const fsInfo = await FileSystem.getInfoAsync(targetUri);
-                if (fsInfo.exists && !fsInfo.isDirectory) actualSize = fsInfo.size;
-            }
-
-            setDetailedInfo({
-                size: actualSize || (currentPhoto.fileSize || 0),
-                width: info.width || 0,
-                height: info.height || 0
-            });
         } catch (error) {
-            console.warn("Failed to get asset info:", error);
+            console.warn("Non-critical info fetch failed:", error);
         } finally {
             setIsCalculatingInfo(false);
         }
@@ -363,7 +376,14 @@ export default function SwipeScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         swipeRight();
         translateX.value = 0;
-    }, [dismissTutorial, swipeRight, translateX]);
+        setAdTriggerCounter(prev => {
+            const next = prev + 1;
+            if (next >= AD_CONFIG.SWIPES_PER_INTERSTITIAL) {
+                showAd();
+            }
+            return next;
+        });
+    }, [dismissTutorial, swipeRight, translateX, showAd]);
 
     const handleSwipeLeft = useCallback(() => {
         dismissTutorial();
@@ -371,7 +391,14 @@ export default function SwipeScreen() {
         playDeleteSound();
         swipeLeft();
         translateX.value = 0;
-    }, [dismissTutorial, swipeLeft, translateX, playDeleteSound]);
+        setAdTriggerCounter(prev => {
+            const next = prev + 1;
+            if (next >= AD_CONFIG.SWIPES_PER_INTERSTITIAL) {
+                showAd();
+            }
+            return next;
+        });
+    }, [dismissTutorial, swipeLeft, translateX, playDeleteSound, showAd]);
 
     const panGesture = Gesture.Pan()
         .onBegin(() => {
@@ -423,7 +450,7 @@ export default function SwipeScreen() {
     }));
 
     const renderCards = () => {
-        if (!currentPhoto) return null;
+        if (!currentPhoto || !photos || !photos.length) return null;
         const cards = [];
         for (let i = VISIBLE_CARDS - 1; i >= 0; i--) {
             const idx = currentIndex + i;
@@ -438,7 +465,7 @@ export default function SwipeScreen() {
 
     const sortLabel = sortMode === 'newest' ? 'Newest' : sortMode === 'oldest' ? 'Oldest' : 'Largest';
 
-    /* ── INTRO SCREEN (early return) ── */
+    /* ΓöÇΓöÇ INTRO SCREEN (early return) ΓöÇΓöÇ */
     if (showIntro) {
         return (
             <View style={s.container}>
@@ -446,31 +473,31 @@ export default function SwipeScreen() {
                 <LinearGradient colors={['#fff0f5', '#ffffff', '#fef1f6']} style={StyleSheet.absoluteFill} />
                 <View style={s.introOverlay}>
                     <FadeSlideIn delay={100}>
-                        <Text style={s.introGreeting}>{getGreeting()} 👋</Text>
+                        <Text style={s.introGreeting}>{getGreeting() + ' \uD83D\uDC4B'}</Text>
                         <Text style={s.introSub}>Here's your gallery at a glance</Text>
                     </FadeSlideIn>
                     <View style={s.introStatsRow}>
-                        <FadeSlideIn delay={300} style={s.introStatCard}>
+                        <ScalePress style={s.introStatCard} onPress={() => enterSession('Random')}>
                             <View style={[s.introStatIconWrap, { backgroundColor: 'rgba(99,102,241,0.12)' }]}>
                                 <Ionicons name="image" size={24} color="#6366f1" />
                             </View>
                             <CountUp to={categoryCounts.photos} delay={400} style={s.introStatNum} />
                             <Text style={s.introStatLabel}>Photos</Text>
-                        </FadeSlideIn>
-                        <FadeSlideIn delay={500} style={s.introStatCard}>
+                        </ScalePress>
+                        <ScalePress style={s.introStatCard} onPress={() => enterSession('Videos')}>
                             <View style={[s.introStatIconWrap, { backgroundColor: 'rgba(236,72,153,0.12)' }]}>
                                 <Ionicons name="videocam" size={24} color="#ec4899" />
                             </View>
                             <CountUp to={categoryCounts.videos} delay={600} style={s.introStatNum} />
                             <Text style={s.introStatLabel}>Videos</Text>
-                        </FadeSlideIn>
-                        <FadeSlideIn delay={700} style={s.introStatCard}>
+                        </ScalePress>
+                        <ScalePress style={s.introStatCard} onPress={() => enterSession('Screenshots')}>
                             <View style={[s.introStatIconWrap, { backgroundColor: 'rgba(34,197,94,0.12)' }]}>
                                 <Ionicons name="phone-portrait" size={24} color="#22c55e" />
                             </View>
                             <CountUp to={categoryCounts.screenshots} delay={800} style={s.introStatNum} />
                             <Text style={s.introStatLabel}>Screenshots</Text>
-                        </FadeSlideIn>
+                        </ScalePress>
                     </View>
                     {storage && (
                         <FadeSlideIn delay={900} style={s.introStorageWrap}>
@@ -481,51 +508,62 @@ export default function SwipeScreen() {
                         </FadeSlideIn>
                     )}
                     <FadeSlideIn delay={1100}>
-                        <Text style={s.introReady}>Let's free up some space! ✨</Text>
+                        <Text style={s.introReady}>
+                            {totalClearedBytes > 0 
+                                ? `You've already freed up ${(totalClearedBytes / (1024 * 1024)).toFixed(1)} MB! \u2728` 
+                                : "Let's free up some space! \u2728"}
+                        </Text>
                     </FadeSlideIn>
                 </View>
             </View>
         );
     }
 
-    /* ── MAIN SWIPE SCREEN ── */
+    /* ΓöÇΓöÇ MAIN SWIPE SCREEN ΓöÇΓöÇ */
     return (
         <View style={s.container}>
             <StatusBar barStyle="dark-content" />
             <LinearGradient colors={['#fff0f5', '#ffffff', '#fff0f5']} style={StyleSheet.absoluteFill} />
 
             {/* Header */}
-            <View style={[s.header, { paddingTop: Math.max(insets.top, 20) }]}>
-                <View style={s.headerLeft}>
-                    <Text numberOfLines={1} style={s.brandTitle}>
-                        <Text style={s.headerTitleMain}>Swipe to </Text>
-                        <Text style={s.headerTitleAccent}>Wipe</Text>
+            <View style={[s.header, { paddingTop: Math.max(insets.top, 12), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <ScalePress 
+                        style={{ padding: 4, marginRight: 4 }} 
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            setShowIntro(true);
+                        }}
+                    >
+                        <Ionicons name="home-outline" size={20} color="#6366f1" />
+                    </ScalePress>
+                    <Text style={s.title}>
+                        Swipe to <Text style={s.titleBold}>Wipe</Text>
                     </Text>
-                </View>
-                <View style={s.headerRight}>
-                    <Pressable
+                    <ScalePress 
+                        style={{ padding: 4, marginLeft: 2 }} 
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            loadCategoryStats();
+                            startSwipingSession(activeCatRef.current);
                         }}
-                        style={s.headerIconBtn}
                     >
                         <Ionicons name="refresh" size={18} color="#9ca3af" />
-                    </Pressable>
-                    <Pressable onPress={openSort} style={s.combinedPill}>
-                        <View style={s.pillLeft}>
-                            <Ionicons name="funnel" size={12} color="#ff6b6b" />
-                            <Text style={s.pillSortTxt} numberOfLines={1}>{sortLabel}</Text>
-                        </View>
-                        <View style={s.pillDivider} />
-                        <Text style={s.pillCountTxt}>{remainingCount || 0}</Text>
-                    </Pressable>
+                    </ScalePress>
+                </View>
+
+                <View style={s.filterPill}>
+                    <Text style={s.pillCount}>{remainingCount || 0}</Text>
                 </View>
             </View>
 
-            {/* Cards */}
+            {/* Cards Area */}
             <View style={s.cardArea}>
-                {currentPhoto ? (
+                {isLoadingSession ? (
+                    <View style={s.emptyState}>
+                        <ActivityIndicator size="large" color="#ff6b6b" />
+                        <Text style={[s.emptySub, { marginTop: 20 }]}>Gathering your media...</Text>
+                    </View>
+                ) : currentPhoto ? (
                     <View style={s.cardContainerWrapper}>
                         <GestureDetector gesture={panGesture}>
                             <Animated.View style={s.cardContainer}>
@@ -540,9 +578,9 @@ export default function SwipeScreen() {
                     </View>
                 ) : (
                     <View style={s.emptyState}>
-                        <Text style={s.emptyEmoji}>🎉</Text>
+                        <Text style={s.emptyEmoji}>{'\uD83C\uDF89'}</Text>
                         <Text style={s.emptyTitle}>All Done!</Text>
-                        <Text style={s.emptySub}>Check the Delete Bin to clean up.</Text>
+                        <Text style={s.emptySub}>Check the Review Bin to clean up.</Text>
                         <Pressable style={s.goBackBtn} onPress={handleBack}>
                             <LinearGradient colors={['#ff6b6b', '#ff8e53']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.goBackGrad}>
                                 <Text style={s.goBackTxt}>Go Back</Text>
@@ -573,16 +611,7 @@ export default function SwipeScreen() {
                         <Ionicons name="close" size={40} color="#ef4444" />
                     </ScalePress>
                     <ScalePress
-                        style={[s.mainBtn, s.keepBtn]}
-                        onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            translateX.value = withSpring(W * 1.5, { velocity: 500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeRight)());
-                        }}
-                    >
-                        <Ionicons name="heart" size={36} color="#22c55e" />
-                    </ScalePress>
-                    <ScalePress
-                        style={[s.smallBtn, isSharing && { opacity: 0.5 }]}
+                        style={[s.smallBtn]}
                         disabled={isSharing}
                         onPress={async () => {
                             if (!currentPhoto || isSharing) return;
@@ -634,7 +663,7 @@ export default function SwipeScreen() {
                                         console.warn('Sharing URI is still virtual:', shareUri);
                                     }
 
-                                    const shareMessage = "Hey, look what i found while cleaning my phone! ✨\n\nDownload Swipe to Wipe: https://expo.dev/accounts/purvimotu/projects/photo-swipe";
+                                    const shareMessage = "Hey, look what i found while cleaning my phone! \u2728\n\nDownload Swipe to Wipe: https://expo.dev/accounts/purvimotu/projects/photo-swipe";
 
                                     if (Platform.OS === 'ios') {
                                         // WhatsApp on iOS often ignores the message when a file is shared.
@@ -650,7 +679,7 @@ export default function SwipeScreen() {
                                         setTimeout(() => {
                                             Alert.alert(
                                                 "Message Copied!",
-                                                "WhatsApp sometimes skips the message. We've copied it to your clipboard so you can just 'Paste' it in the chat! ✨",
+                                                "WhatsApp sometimes skips the message. We've copied it to your clipboard so you can just 'Paste' it in the chat! \u2728",
                                                 [{ text: "Got it!" }]
                                             );
                                         }, 1000);
@@ -672,7 +701,16 @@ export default function SwipeScreen() {
                             }
                         }}
                     >
-                        <Ionicons name="share-outline" size={22} color="#fca5a5" />
+                        <Ionicons name="share-social-outline" size={24} color="#3b82f6" />
+                    </ScalePress>
+                    <ScalePress
+                        style={[s.mainBtn, s.keepBtn]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            translateX.value = withSpring(W * 1.5, { velocity: 500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeRight)());
+                        }}
+                    >
+                        <Ionicons name="heart" size={36} color="#22c55e" />
                     </ScalePress>
                     <ScalePress style={s.smallBtn} onPress={openInfo}>
                         <Ionicons name="information" size={22} color="#fca5a5" />
@@ -690,7 +728,7 @@ export default function SwipeScreen() {
                             <ConfettiCannon count={80} origin={{ x: W / 2, y: -20 }} fallSpeed={2500} fadeOut colors={['#ff6b6b', '#ff8e53', '#fca5a5', '#ec4899', '#fcd34d']} />
                         )}
                         <View style={s.celebIconWrap}>
-                            <Text style={s.celebEmoji}>🎉</Text>
+                            <Text style={s.celebEmoji}>≡ƒÄë</Text>
                             <RNAnimated.View style={[s.orbitContainer, { transform: [{ rotate: orbitSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }]}>
                                 <View style={s.orbitDot} />
                             </RNAnimated.View>
@@ -791,7 +829,9 @@ export default function SwipeScreen() {
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         <Text style={{ fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 }}>Date taken</Text>
-                                        <Text style={{ fontFamily: 'DMSans_700Bold', color: '#1f2937' }}>{new Date(currentPhoto.creationTime).toLocaleString()}</Text>
+                                        <Text style={{ fontFamily: 'DMSans_700Bold', color: '#1f2937' }}>
+                                            {new Date(currentPhoto.creationTime || Date.now()).toLocaleString()}
+                                        </Text>
                                     </View>
                                 </View>
                                 <View style={s.celebStatRow}>
@@ -813,7 +853,7 @@ export default function SwipeScreen() {
                                         <View style={{ flex: 1 }}>
                                             <Text style={{ fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 }}>Dimensions</Text>
                                             <Text style={{ fontFamily: 'DMSans_700Bold', color: '#1f2937' }}>
-                                                {detailedInfo.width} × {detailedInfo.height}
+                                                {detailedInfo.width} ├ù {detailedInfo.height}
                                             </Text>
                                         </View>
                                     </View>
@@ -831,14 +871,32 @@ export default function SwipeScreen() {
                     </View>
                 </Pressable>
             </Modal>
+
+            {/* Bottom Banner Ad */}
+            <View style={{ position: 'absolute', bottom: insets.bottom + 8, left: 0, right: 0, alignItems: 'center' }}>
+                <AppBannerAd
+                    unitId={AdUnits.BANNER}
+                    size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                    requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+                />
+            </View>
         </View>
     );
 }
 
 const s = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#fff0f5' },
+    header: {
+        paddingHorizontal: 20,
+        paddingBottom: 15,
+        backgroundColor: 'transparent',
+    },
+    headerLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
 
-    /* ── Intro Splash ── */
+    /* ΓöÇΓöÇ Intro Splash ΓöÇΓöÇ */
     introOverlay: {
         flex: 1,
         justifyContent: 'center', alignItems: 'center',
@@ -897,33 +955,50 @@ const s = StyleSheet.create({
         textAlign: 'center',
     },
 
-    header: {
-        paddingHorizontal: 12, paddingBottom: 12,
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    title: {
+        fontSize: 18,
+        fontFamily: 'DMSans_400Regular',
+        color: '#1f2937',
+        letterSpacing: -0.2
     },
-    iconBtn: {
-        width: 42, height: 42, borderRadius: 21,
-        backgroundColor: '#ffffff',
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: 'rgba(255,107,107,0.15)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 8, elevation: 4,
+    titleBold: {
+        fontFamily: 'Syne_800ExtraBold',
+        color: '#ff6b6b',
     },
-    headerLeft: { flex: 1, paddingLeft: 2, marginRight: 4 },
-    brandTitle: { flexDirection: 'row', alignItems: 'center' },
-    headerTitleMain: { fontFamily: 'Syne_700Bold', color: '#1f2937', fontSize: 13, letterSpacing: -0.2 },
-    headerTitleAccent: { fontFamily: 'Syne_800ExtraBold', color: '#ff6b6b', fontSize: 13, letterSpacing: -0.2 },
-    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
-    headerIconBtn: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-    combinedPill: {
+    statBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+        gap: 5,
+        borderWidth: 1.5,
+    },
+    statBadgeTxt: {
+        fontSize: 11,
+        fontWeight: '800',
+    },
+    subtitle: {
+        fontSize: 13,
+        color: '#9ca3af',
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    headerRight: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        gap: 8 
+    },
+    filterPill: {
         flexDirection: 'row', alignItems: 'center',
         backgroundColor: '#ffffff',
-        paddingHorizontal: 4, paddingVertical: 4, borderRadius: 20,
-        shadowColor: 'rgba(0,0,0,0.05)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2,
-        borderWidth: 1, borderColor: 'rgba(0,0,0,0.02)',
+        paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12,
+        shadowColor: 'rgba(255,107,107,0.12)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 10, elevation: 3,
+        borderWidth: 1.5, borderColor: '#fef2f2',
     },
-    pillLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 10, paddingRight: 8 },
-    pillSortTxt: { fontFamily: 'DMSans_700Bold', color: '#6b7280', fontSize: 13 },
-    pillDivider: { width: 1, height: 14, backgroundColor: '#f3f4f6' },
-    pillCountTxt: { fontFamily: 'Syne_800ExtraBold', color: '#ff6b6b', fontSize: 15, paddingHorizontal: 12 },
+    filterText: { fontFamily: 'DMSans_700Bold', color: '#6b7280', fontSize: 13 },
+    pillSeparator: { width: 1.5, height: 14, backgroundColor: '#f3f4f6', marginHorizontal: 10 },
+    pillCount: { fontFamily: 'Syne_800ExtraBold', color: '#ff6b6b', fontSize: 16, letterSpacing: 0.5 },
 
     cardArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
     cardContainerWrapper: { width: W * 0.9, height: H * 0.58, position: 'relative' },

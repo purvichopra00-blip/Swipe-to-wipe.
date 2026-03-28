@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
+import { logEvent, TrackEvents } from '../lib/analytics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -229,6 +230,7 @@ export default function OnboardingScreen() {
         } else {
             // Sequential Flow: Onboarding Done -> Go to Login
             await AsyncStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true');
+            logEvent(TrackEvents.ONBOARDING_COMPLETE);
             router.replace('/(auth)/login');
         }
     }, [currentIndex, router]);

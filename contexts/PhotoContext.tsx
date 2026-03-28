@@ -68,6 +68,13 @@ interface PhotoContextType {
     endSession: () => void;
     loadCategoryStats: () => Promise<void>;
     totalClearedBytes: number;
+    totalDeletedPhotos: number;
+    showIntro: boolean;
+    setShowIntro: (show: boolean) => void;
+    deepReset: () => Promise<void>;
+    userToken: string | null;
+    isGuest: boolean;
+    setUserToken: (token: string | null) => void;
 }
 
 const PhotoContext = createContext<PhotoContextType | undefined>(undefined);
@@ -77,6 +84,7 @@ const PRELOAD_AHEAD = 3;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const BIN_STORAGE_KEY = '@bin_photos_v2';
 const TOTAL_CLEARED_KEY = '@total_cleared_bytes_v2';
+const TOTAL_DELETED_KEY = '@total_deleted_photos_v2';
 
 export function PhotoProvider({ children }: { children: ReactNode }) {
     const [permissionsGranted, setPermissionsGranted] = useState(false);
@@ -96,6 +104,10 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
     const [hasMore, setHasMore] = useState(false);
     const [sessionStats, setSessionStats] = useState<SessionStats>({ swiped: 0, kept: 0, deleted: 0, mbFreed: 0 });
     const [totalClearedBytes, setTotalClearedBytes] = useState(0);
+    const [totalDeletedPhotos, setTotalDeletedPhotos] = useState(0);
+    const [showIntro, setShowIntro] = useState(true);
+    const [userToken, setUserToken] = useState<string | null>(null);
+    const isGuest = userToken === 'guest';
 
     const [screenshotAlbumId, setScreenshotAlbumId] = useState<string | null>(null);
     const cursorRef = useRef<string | undefined>(undefined);
@@ -123,12 +135,16 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
 
             // Load persistent bin + stats
             try {
-                const [storedBin, storedTotal] = await Promise.all([
+                const [storedBin, storedTotal, storedCount, storedToken] = await Promise.all([
                     AsyncStorage.getItem(BIN_STORAGE_KEY),
-                    AsyncStorage.getItem(TOTAL_CLEARED_KEY)
+                    AsyncStorage.getItem(TOTAL_CLEARED_KEY),
+                    AsyncStorage.getItem(TOTAL_DELETED_KEY),
+                    AsyncStorage.getItem('@auth_token_v1')
                 ]);
                 if (storedBin) setBinPhotos(JSON.parse(storedBin));
                 if (storedTotal) setTotalClearedBytes(parseInt(storedTotal, 10));
+                if (storedCount) setTotalDeletedPhotos(parseInt(storedCount, 10));
+                if (storedToken) setUserToken(storedToken);
             } catch (err) {
                 console.error('Persistence load error', err);
             }
@@ -147,6 +163,12 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
             AsyncStorage.setItem(TOTAL_CLEARED_KEY, totalClearedBytes.toString()).catch(() => { });
         }
     }, [totalClearedBytes]);
+
+    useEffect(() => {
+        if (totalDeletedPhotos > 0) {
+            AsyncStorage.setItem(TOTAL_DELETED_KEY, totalDeletedPhotos.toString()).catch(() => { });
+        }
+    }, [totalDeletedPhotos]);
 
     // Recalculate Bin Storage size
     useEffect(() => {
@@ -330,8 +352,10 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         try {
             const deleted = await MediaLibrary.deleteAssetsAsync(toDelete);
             if (deleted) {
-                const newTotal = totalClearedBytes + bytesToDelete;
-                setTotalClearedBytes(newTotal);
+                const newTotalBytes = totalClearedBytes + bytesToDelete;
+                const newTotalPhotos = totalDeletedPhotos + toDelete.length;
+                setTotalClearedBytes(newTotalBytes);
+                setTotalDeletedPhotos(newTotalPhotos);
                 setBinPhotos(prev => ids ? prev.filter(p => !ids.includes(p.id)) : []);
                 if (!ids) setBinStorageBytes(0);
                 loadCategoryStats();
@@ -397,6 +421,33 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         }
         setCurrentIndex(prev => Math.max(0, prev - 1));
     }, [undoStack]);
+    
+    const deepReset = useCallback(async () => {
+        // Clear all persistent storage
+        await AsyncStorage.multiRemove([
+            BIN_STORAGE_KEY,
+            TOTAL_CLEARED_KEY,
+            TOTAL_DELETED_KEY,
+            '@bin_photos_v2', // old keys just in case
+            '@total_cleared_bytes_v2',
+            '@total_deleted_photos_v2'
+        ]);
+        
+        // Reset all in-memory state
+        setPhotos([]);
+        setCurrentIndex(0);
+        setKeptPhotos([]);
+        setBinPhotos([]);
+        setUndoStack([]);
+        setBinStorageBytes(0);
+        setTotalClearedBytes(0);
+        setTotalDeletedPhotos(0);
+        setSessionStats({ swiped: 0, kept: 0, deleted: 0, mbFreed: 0 });
+        setShowIntro(true);
+        
+        // Force reload stats from empty
+        await loadCategoryStats();
+    }, [loadCategoryStats]);
 
     return (
         <PhotoContext.Provider
@@ -408,7 +459,9 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                 setSortMode, swipeRight, swipeLeft, undo,
                 commitDeletions, restoreFromBin,
                 startSwipingSession, loadMore, endSession, loadCategoryStats,
-                totalClearedBytes,
+                totalClearedBytes, totalDeletedPhotos,
+                showIntro, setShowIntro, deepReset,
+                userToken, isGuest, setUserToken,
             }}
         >
             {children}

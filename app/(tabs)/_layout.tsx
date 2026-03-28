@@ -64,13 +64,19 @@ export default function TabLayout() {
             }}
             tabBar={(props) => {
                 const { state, navigation, descriptors } = props;
+                // Filter out screens with href: null to match our custom UI state
+                const visibleRoutes = state.routes.filter(route => {
+                    const { options } = descriptors[route.key];
+                    return options.href !== null;
+                });
+
                 return (
                     <View style={[styles.tabBarContainer, { bottom: Math.max(insets.bottom, 20) }]}>
                         <View style={styles.tabBarPill}>
                             <Animated.View style={[styles.indicator, indicatorStyle]} />
-                            {state.routes.map((route, index) => {
+                            {visibleRoutes.map((route, index) => {
                                 const { options } = descriptors[route.key];
-                                const isFocused = state.index === index;
+                                const isFocused = state.index === state.routes.findIndex(r => r.key === route.key);
 
                                 const onPress = () => {
                                     const event = navigation.emit({

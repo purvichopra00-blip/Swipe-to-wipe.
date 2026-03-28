@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
     StyleSheet, View, Text, TextInput, Pressable,
     Dimensions, KeyboardAvoidingView, Platform,
@@ -11,11 +11,11 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
-import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
+import { signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
+import { usePhotos } from '../../contexts/PhotoContext';
 
-const { width: W, height: H } = Dimensions.get('window');
+const { height: H } = Dimensions.get('window');
 
 export const AUTH_TOKEN_KEY = '@auth_token_v1';
 
@@ -34,14 +34,28 @@ const COUNTRIES = [
 
 export default function LoginScreen() {
     const router = useRouter();
-    const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+    const { setUserToken } = usePhotos();
     const [authMode, setAuthMode] = useState<'phone' | 'otp'>('phone');
-    const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
+    const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[1]); // Default India
     const [isCountryModalVisible, setIsCountryModalVisible] = useState(false);
     const [phone, setPhone] = useState('');
     const [otp, setOtp] = useState('');
-    const [verificationId, setVerificationId] = useState<string | null>(null);
+    const [confirmationResult, setConfirmationResult] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
+
+    const handleGuestMode = async () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setIsLoading(true);
+        try {
+            await AsyncStorage.setItem(AUTH_TOKEN_KEY, 'guest');
+            setUserToken('guest');
+            router.replace('/permissions');
+        } catch (error) {
+            console.error("Guest mode error:", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleSendOtp = async () => {
         if (phone.length < 5) {
@@ -53,13 +67,11 @@ export default function LoginScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         try {
-            const phoneProvider = new PhoneAuthProvider(auth);
             const fullPhone = `${selectedCountry.dialCode}${phone}`;
-            const vid = await phoneProvider.verifyPhoneNumber(
-                fullPhone,
-                recaptchaVerifier.current!
-            );
-            setVerificationId(vid);
+            // signInWithPhoneNumber uses Firebase's built-in JS-layer reCAPTCHA
+            // No native pod required — this is the modern approach
+            const result = await signInWithPhoneNumber(auth, fullPhone);
+            setConfirmationResult(result);
             setAuthMode('otp');
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (error: any) {
@@ -71,7 +83,7 @@ export default function LoginScreen() {
     };
 
     const handleVerifyOtp = async () => {
-        if (!verificationId) return;
+        if (!confirmationResult) return;
         if (otp.length < 6) {
             Alert.alert("Invalid Code", "Please enter the 6-digit code.");
             return;
@@ -79,12 +91,13 @@ export default function LoginScreen() {
 
         setIsLoading(true);
         try {
-            const credential = PhoneAuthProvider.credential(verificationId, otp);
+            const credential = PhoneAuthProvider.credential(confirmationResult.verificationId, otp);
             const userCredential = await signInWithCredential(auth, credential);
 
             // Success
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             await AsyncStorage.setItem(AUTH_TOKEN_KEY, userCredential.user.uid);
+            setUserToken(userCredential.user.uid);
             router.replace('/permissions');
         } catch (error: any) {
             console.error("Verification error:", error);
@@ -114,12 +127,6 @@ export default function LoginScreen() {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View style={s.container}>
                 <LinearGradient colors={['#fff0f5', '#ffffff', '#fef1f6']} style={StyleSheet.absoluteFill} />
-
-                <FirebaseRecaptchaVerifierModal
-                    ref={recaptchaVerifier}
-                    firebaseConfig={auth.app.options}
-                    attemptInvisibleVerification={true}
-                />
 
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -164,6 +171,13 @@ export default function LoginScreen() {
                                     <LinearGradient colors={['#ff6b6b', '#ff8e53']} style={s.primaryGrad}>
                                         {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryBtnTxt}>Send OTP</Text>}
                                     </LinearGradient>
+                                </Pressable>
+                                <Pressable
+                                    style={s.guestBtn}
+                                    onPress={handleGuestMode}
+                                    disabled={isLoading}
+                                >
+                                    <Text style={s.guestBtnTxt}>Continue as Guest</Text>
                                 </Pressable>
                             </View>
                         )}
@@ -265,6 +279,8 @@ const s = StyleSheet.create({
     primaryGrad: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     primaryBtnTxt: { fontSize: 18, fontFamily: 'DMSans_700Bold', color: '#fff' },
     disabledBtn: { opacity: 0.5 },
+    guestBtn: { height: 64, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+    guestBtnTxt: { fontSize: 16, fontFamily: 'DMSans_700Bold', color: '#6b7280' },
     backBtn: { alignSelf: 'center', marginTop: 8 },
     backBtnTxt: { fontSize: 14, fontFamily: 'DMSans_700Bold', color: '#ff6b6b' },
     footer: { marginTop: 40, alignItems: 'center' },
