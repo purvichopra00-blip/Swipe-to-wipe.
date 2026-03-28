@@ -11,12 +11,10 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getFirebaseAuth } from '../../lib/firebase';
+import { firebaseAuthREST, AUTH_TOKEN_KEY, AUTH_ID_TOKEN } from '../../lib/firebase';
 import { usePhotos } from '../../contexts/PhotoContext';
 
 const { height: H } = Dimensions.get('window');
-
-export const AUTH_TOKEN_KEY = '@auth_token_v1';
 
 const COUNTRIES = [
     { name: 'United States', dialCode: '+1', flag: '🇺🇸' },
@@ -41,7 +39,6 @@ export default function LoginScreen() {
     const [otp, setOtp] = useState('');
     const [sessionInfo, setSessionInfo] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const auth = getFirebaseAuth();
 
     const handleGuestMode = async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -64,26 +61,16 @@ export default function LoginScreen() {
         }
 
         setIsLoading(true);
-        const apiKey = auth.app.options.apiKey;
         const fullPhone = `${selectedCountry.dialCode}${phone}`;
 
         try {
-            const resp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    phoneNumber: fullPhone,
-                    // Note: This REST API requires reCAPTCHA for live numbers.
-                    // To bypass this for testing, add your number as a test number in Firebase Console.
-                    // For production, the app will need the native reCAPTCHA flow which is currently being updated by Expo.
-                })
+            const data = await firebaseAuthREST('sendVerificationCode', {
+                phoneNumber: fullPhone,
             });
 
-            const data = await resp.json();
             if (data.error) {
-                // Special check for reCAPTCHA failure over REST
                 if (data.error.message.includes('CAPTCHA')) {
-                    throw new Error("Phone auth currently requires a test number in Firebase Console, or the full native build for verification. Please use Guest Mode for now.");
+                    throw new Error("Phone auth requires setup in Firebase Console. For testing, please use Guest Mode.");
                 }
                 throw new Error(data.error.message);
             }
@@ -93,7 +80,7 @@ export default function LoginScreen() {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (error: any) {
             console.error("OTP send error:", error);
-            Alert.alert("Error", error.message);
+            Alert.alert("Authentication Failed", error.message);
         } finally {
             setIsLoading(false);
         }
@@ -107,24 +94,19 @@ export default function LoginScreen() {
         }
 
         setIsLoading(true);
-        const apiKey = auth.app.options.apiKey;
-
         try {
-            const resp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPhoneNumber?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sessionInfo,
-                    code: otp
-                })
+            const data = await firebaseAuthREST('signInWithPhoneNumber', {
+                sessionInfo,
+                code: otp
             });
 
-            const data = await resp.json();
             if (data.error) throw new Error(data.error.message);
 
-            // Success
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            await AsyncStorage.setItem(AUTH_TOKEN_KEY, data.localId);
+            await Promise.all([
+                AsyncStorage.setItem(AUTH_TOKEN_KEY, data.localId),
+                AsyncStorage.setItem(AUTH_ID_TOKEN, data.idToken)
+            ]);
             setUserToken(data.localId);
             router.replace('/permissions');
         } catch (error: any) {
