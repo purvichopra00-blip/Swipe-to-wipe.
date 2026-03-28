@@ -1,7 +1,7 @@
+import 'react-native-get-random-values';
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 
-// Your web app's Firebase configuration
 const firebaseConfig = {
     apiKey: "AIzaSyBV7kIh8wXvBsY6ZWRMc8jqtT38XScs1u4",
     authDomain: "swipe-to-wipe.firebaseapp.com",
@@ -12,10 +12,9 @@ const firebaseConfig = {
     measurementId: "G-QD6DNG6V0Y"
 };
 
-// Initialize Firebase (singleton pattern)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Auth using the default provider for React Native
+// Using the simplest possible registration to avoid the internal crash
 const auth = getAuth(app);
 
 export { auth };
