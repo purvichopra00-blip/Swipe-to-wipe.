@@ -2,9 +2,14 @@ import React, { createContext, useContext, useState, useCallback, ReactNode, use
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
-import { ActionSheetIOS, Platform, LogBox } from 'react-native';
+import { ActionSheetIOS, Platform, LogBox, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AUTH_TOKEN_KEY } from '../lib/firebase';
+import { 
+    AUTH_TOKEN_KEY, 
+    AUTH_ID_TOKEN,
+    ONBOARDING_COMPLETED_KEY,
+    PERMISSIONS_GRANTED_KEY 
+} from '../lib/firebase';
 import { Photo } from '../constants/photos';
 
 // Suppress known non-critical library warnings from being visible to user
@@ -140,7 +145,7 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         })();
     }, []);
 
-    // Individual Persistence - No conditions to prevent "stop saving" bug
+    // Individual Persistence
     useEffect(() => {
         AsyncStorage.setItem(BIN_STORAGE_KEY, JSON.stringify(binPhotos)).catch(() => { });
     }, [binPhotos]);
@@ -243,10 +248,7 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
 
         try {
             const result = await MediaLibrary.getAssetsAsync(fetchOptions);
-            const rawAssets = result.assets;
-
-            // Filter out items already in bin or kept during THIS session only for now
-            const filtered = rawAssets.filter(a => !binPhotos.some(bp => bp.id === a.id));
+            const filtered = result.assets.filter(a => !binPhotos.some(bp => bp.id === a.id));
             
             setPhotos(filtered.map(a => ({
                 id: a.id,
@@ -265,7 +267,6 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         } catch (err) {
             console.error('Session start error', err);
         } finally {
-            setIsLoadingSession(true); // Keep session loading true for UX? No.
             setIsLoadingSession(false);
         }
     };
@@ -394,7 +395,16 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         setTotalDeletedPhotos(0);
         setSessionStats({ swiped: 0, kept: 0, deleted: 0, mbFreed: 0 });
         setShowIntro(true);
-        await AsyncStorage.multiRemove([BIN_STORAGE_KEY, TOTAL_CLEARED_KEY, TOTAL_DELETED_KEY, '@auth_token_v1']);
+        // Clear all production keys
+        await AsyncStorage.multiRemove([
+            BIN_STORAGE_KEY, 
+            TOTAL_CLEARED_KEY, 
+            TOTAL_DELETED_KEY, 
+            AUTH_TOKEN_KEY, 
+            AUTH_ID_TOKEN,
+            ONBOARDING_COMPLETED_KEY,
+            PERMISSIONS_GRANTED_KEY
+        ]);
     };
 
     const value = {

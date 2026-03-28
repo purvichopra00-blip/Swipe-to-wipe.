@@ -18,11 +18,70 @@ import { initAds } from '../lib/ads';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+function NavigationGuard() {
     const router = useRouter();
     const segments = useSegments();
+    const isNavigating = useRef(false);
+    const [isFlowChecked, setIsFlowChecked] = useState(false);
+
+    useEffect(() => {
+        async function checkFlow() {
+            if (isNavigating.current) return;
+
+            try {
+                // Wait for a small beat to ensure AsyncStorage is settled if we just came from setItem
+                await new Promise(r => setTimeout(r, 100));
+
+                const [completed, token, permissions] = await Promise.all([
+                    AsyncStorage.getItem(ONBOARDING_COMPLETED_KEY),
+                    AsyncStorage.getItem(AUTH_TOKEN_KEY),
+                    AsyncStorage.getItem(PERMISSIONS_GRANTED_KEY)
+                ]);
+
+                const rootSegment = segments[0];
+                let targetRoute: string | null = null;
+
+                if (completed !== 'true') {
+                    if (rootSegment !== 'onboarding') {
+                        targetRoute = '/onboarding';
+                    }
+                } else if (!token) {
+                    if (rootSegment !== '(auth)' && rootSegment !== 'login') {
+                        targetRoute = '/(auth)/login';
+                    }
+                } else if (permissions !== 'true') {
+                    if (rootSegment !== 'permissions') {
+                        targetRoute = '/permissions';
+                    }
+                } else {
+                    if (rootSegment !== '(tabs)' && rootSegment !== 'swipe') {
+                        targetRoute = '/(tabs)';
+                    }
+                }
+
+                if (targetRoute) {
+                    isNavigating.current = true;
+                    router.replace(targetRoute as any);
+                    // Unlock navigation after a longer delay to ensure segments hit the state
+                    setTimeout(() => { isNavigating.current = false; }, 1000);
+                } else {
+                    SplashScreen.hideAsync().catch(() => { });
+                }
+            } catch (err) {
+                console.error('Guard error', err);
+            } finally {
+                setIsFlowChecked(true);
+            }
+        }
+
+        checkFlow();
+    }, [segments]);
+
+    return null;
+}
+
+export default function RootLayout() {
     const [isReady, setIsReady] = useState(false);
-    const isNavigatingRef = useRef(false);
 
     const [fontsLoaded] = useFonts({
         Syne_700Bold,
@@ -36,8 +95,6 @@ export default function RootLayout() {
         async function prepare() {
             try {
                 await initAds();
-            } catch (e) {
-                console.warn('AdInit failed', e);
             } finally {
                 setIsReady(true);
             }
@@ -45,67 +102,13 @@ export default function RootLayout() {
         prepare();
     }, []);
 
-    // Stabilized Navigation Flow
-    useEffect(() => {
-        if (!isReady || !fontsLoaded || isNavigatingRef.current) return;
-
-        async function checkFlow() {
-            try {
-                const [completed, token, permissions] = await Promise.all([
-                    AsyncStorage.getItem(ONBOARDING_COMPLETED_KEY),
-                    AsyncStorage.getItem(AUTH_TOKEN_KEY),
-                    AsyncStorage.getItem(PERMISSIONS_GRANTED_KEY)
-                ]);
-
-                // Flatten segments for robust comparison
-                const segmentPath = segments.filter(Boolean).join('/');
-                const rootSegment = segments[0];
-
-                let targetRoute: string | null = null;
-
-                if (completed !== 'true') {
-                    if (rootSegment !== 'onboarding') {
-                        targetRoute = '/onboarding';
-                    }
-                } else if (!token) {
-                    // Check if we are outside of the (auth) group
-                    if (rootSegment !== '(auth)' && rootSegment !== 'login') {
-                        targetRoute = '/(auth)/login';
-                    }
-                } else if (permissions !== 'true') {
-                    if (rootSegment !== 'permissions') {
-                        targetRoute = '/permissions';
-                    }
-                } else {
-                    // Check if we are outside of (tabs) or main swipe
-                    if (rootSegment !== '(tabs)' && rootSegment !== 'swipe') {
-                        targetRoute = '/(tabs)';
-                    }
-                }
-
-                if (targetRoute) {
-                    isNavigatingRef.current = true;
-                    router.replace(targetRoute as any);
-                    // Reset navigating flag after a delay to allow segment update
-                    setTimeout(() => { isNavigatingRef.current = false; }, 500);
-                } else {
-                    // Flow is correct, hide splash
-                    SplashScreen.hideAsync().catch(() => { });
-                }
-            } catch (err) {
-                console.error('Flow check error', err);
-            }
-        }
-
-        checkFlow();
-    }, [isReady, fontsLoaded, segments]);
-
     if (!isReady || !fontsLoaded) return null;
 
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
             <SafeAreaProvider>
                 <PhotoProvider>
+                    <NavigationGuard />
                     <Stack screenOptions={{ headerShown: false }}>
                         <Stack.Screen name="onboarding" />
                         <Stack.Screen name="(auth)/login" />

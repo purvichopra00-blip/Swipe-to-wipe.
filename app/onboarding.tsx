@@ -155,6 +155,13 @@ export default function OnboardingScreen() {
         DUMMY_PHOTOS.forEach(url => Image.prefetch(url));
 
         (async () => {
+            const completed = await AsyncStorage.getItem(ONBOARDING_COMPLETED_KEY);
+            if (completed === 'true') {
+                console.log('Onboarding already complete, skipping...');
+                router.replace('/(auth)/login');
+                return;
+            }
+
             try {
                 let free = 0;
                 let total = 0;

@@ -17,16 +17,15 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 /**
  * AUTH STORAGE KEYS
+ * Bump versions to V5 to ensure a "Clean Slate" and resolve the onboarding loop.
  */
-export const AUTH_TOKEN_KEY = '@auth_token_v1';
-export const AUTH_ID_TOKEN = '@auth_id_token_v1';
-export const ONBOARDING_COMPLETED_KEY = '@onboarding_completed_v1';
-export const PERMISSIONS_GRANTED_KEY = '@permissions_granted_v1';
+export const AUTH_TOKEN_KEY = '@auth_token_v5';
+export const AUTH_ID_TOKEN = '@auth_id_token_v5';
+export const ONBOARDING_COMPLETED_KEY = '@onboarding_completed_v5';
+export const PERMISSIONS_GRANTED_KEY = '@permissions_granted_v5';
 
 /**
  * REST API HELPER for Firebase Auth
- * Since the Firebase JS SDK is failing to register its components in this Expo/Metro environment,
- * we use the Google Identity Toolkit REST API for maximum stability.
  */
 export const firebaseAuthREST = async (endpoint: string, body: any) => {
     const url = `https://identitytoolkit.googleapis.com/v1/accounts:${endpoint}?key=${firebaseConfig.apiKey}`;

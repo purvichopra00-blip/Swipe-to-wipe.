@@ -16,9 +16,13 @@ import { Easing } from 'react-native-reanimated';
 import Animated, { Layout, FadeIn, FadeOut, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { firebaseAuthREST, AUTH_TOKEN_KEY, AUTH_ID_TOKEN } from '../../lib/firebase';
-import { ONBOARDING_COMPLETED_KEY } from '../onboarding';
-import { PERMISSIONS_GRANTED_KEY } from '../permissions';
+import { 
+    firebaseAuthREST, 
+    AUTH_TOKEN_KEY, 
+    AUTH_ID_TOKEN, 
+    ONBOARDING_COMPLETED_KEY, 
+    PERMISSIONS_GRANTED_KEY 
+} from '../../lib/firebase';
 import { AppBannerAd, BannerAdSize, AdUnits } from '../../lib/ads';
 
 const { width: W } = Dimensions.get('window');
@@ -165,7 +169,7 @@ export default function BinScreen() {
                             if (idToken) {
                                 await firebaseAuthREST('delete', { idToken });
                             }
-                            // Deep Wipe: Clear all local data
+                            // Clean Slate: Reset all V5 keys
                             await AsyncStorage.multiRemove([
                                 AUTH_TOKEN_KEY, 
                                 AUTH_ID_TOKEN,
@@ -412,7 +416,7 @@ export default function BinScreen() {
                             </ScalePress>
                         </View>
                         
-                        <Text style={styles.versionTxt}>Version 1.0.0 (Production Ready)</Text>
+                        <Text style={styles.versionTxt}>Version 1.0.0 (Production Stable V5)</Text>
                     </Animated.View>
                 </Pressable>
             </Modal>
