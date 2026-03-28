@@ -1,3 +1,4 @@
+import 'react-native-get-random-values';
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAuth, initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
