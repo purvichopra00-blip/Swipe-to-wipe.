@@ -49,33 +49,28 @@ interface PhotoContextType {
     binPhotos: BinPhoto[];
     currentPhoto: Photo | null;
     remainingCount: number;
-    canUndo: boolean;
-    permissionsGranted: boolean;
+    keptCount: number;
+    binCount: number;
     isLoading: boolean;
     isLoadingSession: boolean;
     categoryCounts: CategoryCounts;
-    binStorageBytes: number;
-    sortMode: SortMode;
-    hasMore: boolean;
     sessionStats: SessionStats;
-    setSortMode: (mode: SortMode) => void;
-    swipeRight: () => void;
-    swipeLeft: () => void;
-    undo: () => void;
-    commitDeletions: (ids?: string[]) => Promise<void>;
-    restoreFromBin: (id: string) => void;
-    startSwipingSession: (category: string) => Promise<void>;
-    loadMore: () => Promise<void>;
-    endSession: () => void;
-    loadCategoryStats: () => Promise<void>;
     totalClearedBytes: number;
     totalDeletedPhotos: number;
-    showIntro: boolean;
-    setShowIntro: (show: boolean) => void;
-    deepReset: () => Promise<void>;
-    userToken: string | null;
+    binStorageBytes: number;
+    hasMore: boolean;
     isGuest: boolean;
-    setUserToken: (token: string | null) => void;
+    showIntro: boolean;
+    setShowIntro: (s: boolean) => void;
+    setUserToken: (t: string | null) => void;
+    handleSwipe: (action: 'keep' | 'bin') => Promise<void>;
+    undoLast: () => void;
+    commitDeletions: (ids?: string[]) => Promise<void>;
+    restoreFromBin: (id: string) => Promise<void>;
+    loadCategoryStats: (category?: string) => Promise<void>;
+    loadMore: () => Promise<void>;
+    deepReset: () => Promise<void>;
+    endSession: () => void;
 }
 
 const PhotoContext = createContext<PhotoContextType | undefined>(undefined);
@@ -114,26 +109,10 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
     const cursorRef = useRef<string | undefined>(undefined);
     const activeCategoryRef = useRef<string>('Random');
 
-    // Initial load: Permissions + Persistent State
+    // Initial load: Persistent State
     useEffect(() => {
         (async () => {
-            const { status, accessPrivileges } = await MediaLibrary.getPermissionsAsync();
-            if (status === 'granted' || (Platform.OS === 'ios' && accessPrivileges === 'all') || (Platform.OS === 'ios' && accessPrivileges === 'limited')) {
-                setPermissionsGranted(true);
-                loadCategoryStats();
-            } else if (status === 'undetermined') {
-                const req = await MediaLibrary.requestPermissionsAsync();
-                if (req.status === 'granted') {
-                    setPermissionsGranted(true);
-                    loadCategoryStats();
-                } else {
-                    setIsLoading(false);
-                }
-            } else {
-                setPermissionsGranted(false);
-                setIsLoading(false);
-            }
-
+            // Load persistent bin + stats
             try {
                 const [storedBin, storedTotal, storedCount, storedToken] = await Promise.all([
                     AsyncStorage.getItem(BIN_STORAGE_KEY),
@@ -147,33 +126,41 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                 if (storedToken) setUserToken(storedToken);
             } catch (err) {
                 console.error('Persistence load error', err);
+            } finally {
+                // Now check permissions
+                const { status, accessPrivileges } = await MediaLibrary.getPermissionsAsync();
+                if (status === 'granted' || (Platform.OS === 'ios' && (accessPrivileges === 'all' || accessPrivileges === 'limited'))) {
+                    setPermissionsGranted(true);
+                    loadCategoryStats();
+                } else {
+                    setPermissionsGranted(false);
+                    setIsLoading(false);
+                }
             }
         })();
     }, []);
 
-    // Auto-save bin to persistent storage
+    // Individual Persistence - No conditions to prevent "stop saving" bug
     useEffect(() => {
-        if (binPhotos.length > 0 || totalClearedBytes > 0) {
-            AsyncStorage.setItem(BIN_STORAGE_KEY, JSON.stringify(binPhotos)).catch(() => { });
-        }
+        AsyncStorage.setItem(BIN_STORAGE_KEY, JSON.stringify(binPhotos)).catch(() => { });
     }, [binPhotos]);
 
     useEffect(() => {
-        if (totalClearedBytes > 0) {
-            AsyncStorage.setItem(TOTAL_CLEARED_KEY, totalClearedBytes.toString()).catch(() => { });
-        }
+        AsyncStorage.setItem(TOTAL_CLEARED_KEY, totalClearedBytes.toString()).catch(() => { });
     }, [totalClearedBytes]);
 
     useEffect(() => {
-        if (totalDeletedPhotos > 0) {
-            AsyncStorage.setItem(TOTAL_DELETED_KEY, totalDeletedPhotos.toString()).catch(() => { });
-        }
+        AsyncStorage.setItem(TOTAL_DELETED_KEY, totalDeletedPhotos.toString()).catch(() => { });
     }, [totalDeletedPhotos]);
 
     // Recalculate Bin Storage size
     useEffect(() => {
         let isMounted = true;
         const calculateBinSize = async () => {
+            if (binPhotos.length === 0) {
+                if (isMounted) setBinStorageBytes(0);
+                return;
+            }
             let total = 0;
             for (const asset of binPhotos) {
                 if (asset.fileSize) {
@@ -198,242 +185,205 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         const now = Date.now();
         const expired = binPhotos.filter(p => now - p.deletedAt > SEVEN_DAYS_MS);
         if (expired.length > 0) {
-            const expiredIds = expired.map(p => p.id);
-            MediaLibrary.deleteAssetsAsync(expiredIds).catch(() => { });
             setBinPhotos(prev => prev.filter(p => now - p.deletedAt <= SEVEN_DAYS_MS));
         }
 
         return () => { isMounted = false; };
     }, [binPhotos]);
 
-    // Preload Logic
-    useEffect(() => {
-        const preload = async () => {
-            if (photos.length === 0) return;
-            for (let i = 1; i <= PRELOAD_AHEAD; i++) {
-                const upcoming = photos[currentIndex + i];
-                if (upcoming?.url) Image.prefetch(upcoming.url).catch(() => { });
-            }
-            if (hasMore && photos.length - currentIndex <= 10 && !isLoadingSession) {
-                loadMore();
-            }
-        };
-        preload();
-    }, [currentIndex, photos]);
-
-    const getSortBy = (mode: SortMode): any => {
-        if (mode === 'oldest') return [[MediaLibrary.SortBy.creationTime, true]];
-        return [MediaLibrary.SortBy.creationTime];
-    };
-
-    const mapAssets = async (assets: MediaLibrary.Asset[]): Promise<Photo[]> => {
-        const mapped = await Promise.all(assets.map(async (asset) => {
-            let fileSize = 0;
-            if (sortMode === 'largest') {
-                try {
-                    const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: false });
-                    const fi = await FileSystem.getInfoAsync(info.localUri || info.uri);
-                    if (fi.exists && !fi.isDirectory) fileSize = (fi as any).size ?? 0;
-                } catch { /* ignore */ }
-            }
-            return {
-                id: asset.id, url: asset.uri, mediaType: asset.mediaType,
-                duration: asset.duration, creationTime: asset.creationTime,
-                modificationTime: asset.modificationTime, filename: asset.filename, fileSize,
-            };
-        }));
-        if (sortMode === 'largest') return mapped.sort((a, b) => (b.fileSize ?? 0) - (a.fileSize ?? 0));
-        return mapped;
-    };
-
-    const fetchBatch = async (category: string, after?: string) => {
-        const sortBy = getSortBy(sortMode);
-        const base = { first: BATCH_SIZE, sortBy, after };
-        try {
-            let result: MediaLibrary.PagedInfo<MediaLibrary.Asset>;
-            if (category === 'Videos') result = await MediaLibrary.getAssetsAsync({ ...base, mediaType: MediaLibrary.MediaType.video });
-            else if (category === 'Screenshots' && screenshotAlbumId) result = await MediaLibrary.getAssetsAsync({ ...base, album: screenshotAlbumId });
-            else result = await MediaLibrary.getAssetsAsync(base);
-
-            // Deduplicate incoming assets by ID immediately
-            const seen = new Set();
-            const uniqueAssets = result.assets.filter(a => {
-                if (seen.has(a.id)) return false;
-                seen.add(a.id);
-                return true;
-            });
-
-            return { assets: uniqueAssets, endCursor: result.endCursor, hasNextPage: result.hasNextPage };
-        } catch (err) {
-            console.error('fetchBatch error', err);
-            return { assets: [], hasNextPage: false };
-        }
-    };
-
-    const loadCategoryStats = useCallback(async () => {
+    const loadCategoryStats = async (category: string = 'Random') => {
         setIsLoading(true);
+        activeCategoryRef.current = category;
         try {
-            const [allMedia, videos, albums] = await Promise.all([
-                MediaLibrary.getAssetsAsync({ first: 1 }),
-                MediaLibrary.getAssetsAsync({ mediaType: MediaLibrary.MediaType.video, first: 1 }),
-                MediaLibrary.getAlbumsAsync()
-            ]);
-            const screenshotsAlbum = albums.find(a => a.title.toLowerCase().includes('screenshot') || a.title.toLowerCase().includes('capture'));
-            if (screenshotsAlbum) setScreenshotAlbumId(screenshotsAlbum.id);
+            const alb = await MediaLibrary.getAlbumsAsync();
+            const screenshotAlb = alb.find(a => a.title.toLowerCase().includes('screenshot'));
+            setScreenshotAlbumId(screenshotAlb?.id || null);
+
+            const total = await MediaLibrary.getAssetsAsync({ mediaType: ['photo', 'video'] });
+            const photos = await MediaLibrary.getAssetsAsync({ mediaType: 'photo' });
+            const videos = await MediaLibrary.getAssetsAsync({ mediaType: 'video' });
+            const screenshots = screenshotAlb ? await MediaLibrary.getAssetsAsync({ album: screenshotAlb.id, mediaType: 'photo' }) : { totalCount: 0 };
+            const recents = await MediaLibrary.getAssetsAsync({ mediaType: ['photo', 'video'], first: 100, sortBy: [[MediaLibrary.SortBy.creationTime, false]] });
 
             setCategoryCounts({
-                total: allMedia.totalCount || 0,
-                photos: Math.max(0, (allMedia.totalCount || 0) - (videos.totalCount || 0)),
-                videos: videos.totalCount || 0,
-                recents: Math.min(allMedia.totalCount || 0, 100),
-                screenshots: screenshotsAlbum?.assetCount ?? 0,
+                total: total.totalCount,
+                photos: photos.totalCount,
+                videos: videos.totalCount,
+                screenshots: screenshots.totalCount,
+                recents: recents.totalCount
             });
-        } catch (error) {
-            console.error('Error loading stats:', error);
+
+            await startSession(category, screenshotAlb?.id);
+        } catch (err) {
+            console.error('Category stats error', err);
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    };
 
-    const startSwipingSession = useCallback(async (category: string) => {
+    const startSession = async (category: string, screenshotAlbId?: string | null) => {
         setIsLoadingSession(true);
         setCurrentIndex(0);
         setUndoStack([]);
         cursorRef.current = undefined;
-        activeCategoryRef.current = category;
+        
+        const fetchOptions: MediaLibrary.AssetsOptions = {
+            first: 50,
+            mediaType: ['photo', 'video'],
+            sortBy: [[MediaLibrary.SortBy.creationTime, sortMode === 'oldest']],
+        };
 
-        const { assets, endCursor, hasNextPage } = await fetchBatch(category);
+        if (category === 'Screenshots' && (screenshotAlbId || screenshotAlbumId)) {
+            fetchOptions.album = screenshotAlbId || screenshotAlbumId || undefined;
+        } else if (category === 'Videos') {
+            fetchOptions.mediaType = ['video'];
+        } else if (category === 'Photos') {
+            fetchOptions.mediaType = ['photo'];
+        }
 
-        // Robust filtering against existing bin/kept IDs
-        const ignoredIds = new Set([...keptPhotos.map(p => p.id), ...binPhotos.map(p => p.id)]);
-        const filtered = assets.filter(a => !ignoredIds.has(a.id));
+        try {
+            const result = await MediaLibrary.getAssetsAsync(fetchOptions);
+            const rawAssets = result.assets;
 
-        if (category === 'Random') filtered.sort(() => 0.5 - Math.random());
+            // Filter out items already in bin or kept during THIS session only for now
+            const filtered = rawAssets.filter(a => !binPhotos.some(bp => bp.id === a.id));
+            
+            setPhotos(filtered.map(a => ({
+                id: a.id,
+                url: a.uri,
+                mediaType: a.mediaType as any,
+                duration: a.duration,
+                creationTime: a.creationTime,
+                modificationTime: a.modificationTime,
+                filename: a.filename,
+                fileSize: (a as any).width * (a as any).height * 0.5 // Rough fallback estimate
+            })));
+            
+            cursorRef.current = result.endCursor;
+            setHasMore(result.hasNextPage);
+            setSessionStats({ swiped: 0, kept: 0, deleted: 0, mbFreed: 0 });
+        } catch (err) {
+            console.error('Session start error', err);
+        } finally {
+            setIsLoadingSession(true); // Keep session loading true for UX? No.
+            setIsLoadingSession(false);
+        }
+    };
 
-        const mapped = await mapAssets(filtered);
-        setPhotos(mapped);
-        cursorRef.current = endCursor;
-        setHasMore(hasNextPage);
-        setSessionStats({ swiped: 0, kept: 0, deleted: 0, mbFreed: 0 });
-        setIsLoadingSession(false);
-    }, [keptPhotos, binPhotos, sortMode, screenshotAlbumId]);
-
-    const loadMore = useCallback(async () => {
+    const loadMore = async () => {
         if (!hasMore || !cursorRef.current || isLoadingSession) return;
-        const { assets, endCursor, hasNextPage } = await fetchBatch(activeCategoryRef.current, cursorRef.current);
+        setIsLoadingSession(true);
+        const options: MediaLibrary.AssetsOptions = {
+            after: cursorRef.current,
+            first: 50,
+            mediaType: activeCategoryRef.current === 'Videos' ? ['video'] : (activeCategoryRef.current === 'Photos' ? ['photo'] : ['photo', 'video']),
+            sortBy: [[MediaLibrary.SortBy.creationTime, sortMode === 'oldest']],
+        };
 
-        const currentIds = new Set(photos.map(p => p.id));
-        const ignoredIds = new Set([...keptPhotos.map(p => p.id), ...binPhotos.map(p => p.id)]);
+        if (activeCategoryRef.current === 'Screenshots' && screenshotAlbumId) {
+            options.album = screenshotAlbumId;
+        }
 
-        const filtered = assets.filter(a => !currentIds.has(a.id) && !ignoredIds.has(a.id));
-        const mapped = await mapAssets(filtered);
+        try {
+            const result = await MediaLibrary.getAssetsAsync(options);
+            const filtered = result.assets.filter(a => !binPhotos.some(p => p.id === a.id));
+            
+            const newPhotos = filtered.map(a => ({
+                id: a.id,
+                url: a.uri,
+                mediaType: a.mediaType as any,
+                duration: a.duration,
+                creationTime: a.creationTime,
+                modificationTime: a.modificationTime,
+                filename: a.filename,
+                fileSize: (a as any).width * (a as any).height * 0.5
+            }));
+            
+            setPhotos(prev => [...prev, ...newPhotos]);
+            cursorRef.current = result.endCursor;
+            setHasMore(result.hasNextPage);
+        } catch (err) {
+            console.error('Load more error', err);
+        } finally {
+            setIsLoadingSession(false);
+        }
+    };
 
-        setPhotos(prev => [...prev, ...mapped]);
-        cursorRef.current = endCursor;
-        setHasMore(hasNextPage);
-    }, [hasMore, photos, keptPhotos, binPhotos, sortMode, isLoadingSession]);
+    const handleSwipe = async (action: 'keep' | 'bin') => {
+        const photo = photos[currentIndex];
+        if (!photo) return;
 
-    const endSession = useCallback(() => {
+        setUndoStack(prev => [{ photo, action, fileSize: photo.fileSize }, ...prev].slice(0, 10));
+        
+        if (action === 'keep') {
+            setKeptPhotos(prev => [...prev, photo]);
+            setSessionStats(s => ({ ...s, swiped: s.swiped + 1, kept: s.kept + 1 }));
+        } else {
+            setBinPhotos(prev => [{ ...photo, deletedAt: Date.now() }, ...prev]);
+            setSessionStats(s => ({ ...s, swiped: s.swiped + 1, deleted: s.deleted + 1, mbFreed: s.mbFreed + ((photo.fileSize || 0) / 1024 / 1024) }));
+        }
+
+        setCurrentIndex(prev => prev + 1);
+
+        // Preload next
+        if (photos[currentIndex + PRELOAD_AHEAD]) {
+            Image.prefetch(photos[currentIndex + PRELOAD_AHEAD].url);
+        }
+
+        // Auto load more if near end
+        if (currentIndex > photos.length - 10 && hasMore) {
+            loadMore();
+        }
+    };
+
+    const undoLast = () => {
+        if (undoStack.length === 0) return;
+        const entry = undoStack[0];
+        setUndoStack(prev => prev.slice(1));
+        
+        if (entry.action === 'keep') {
+            setKeptPhotos(prev => prev.filter(p => p.id !== entry.photo.id));
+            setSessionStats(s => ({ ...s, swiped: s.swiped - 1, kept: s.kept - 1 }));
+        } else {
+            setBinPhotos(prev => prev.filter(p => p.id !== entry.photo.id));
+            setSessionStats(s => ({ ...s, swiped: s.swiped - 1, deleted: s.deleted - 1, mbFreed: s.mbFreed - ((entry.fileSize || 0) / 1024 / 1024) }));
+        }
+        
+        setCurrentIndex(prev => prev - 1);
+    };
+
+    const commitDeletions = async (ids?: string[]) => {
+        const toDelete = ids ? binPhotos.filter(p => ids.includes(p.id)) : binPhotos;
+        if (toDelete.length === 0) return;
+
+        try {
+            const success = await MediaLibrary.deleteAssetsAsync(toDelete.map(p => p.id));
+            if (success) {
+                const deletedBytes = toDelete.reduce((acc, p) => acc + (p.fileSize || 0), 0);
+                setTotalClearedBytes(prev => prev + deletedBytes);
+                setTotalDeletedPhotos(prev => prev + toDelete.length);
+                setBinPhotos(prev => prev.filter(p => !toDelete.some(td => td.id === p.id)));
+                loadCategoryStats();
+            }
+        } catch (err) {
+            console.error('Commit deletions error', err);
+            Alert.alert('Error', 'Could not delete assets. Please check permissions.');
+        }
+    };
+
+    const restoreFromBin = async (id: string) => {
+        setBinPhotos(prev => prev.filter(p => p.id !== id));
+    };
+
+    const endSession = () => {
         setPhotos([]);
         setCurrentIndex(0);
         setUndoStack([]);
         cursorRef.current = undefined;
         setHasMore(false);
-    }, []);
+    };
 
-    const commitDeletions = useCallback(async (ids?: string[]) => {
-        const toDelete = ids ?? binPhotos.map(p => p.id);
-        if (toDelete.length === 0) return;
-
-        const bytesToDelete = ids
-            ? binPhotos.filter(p => ids.includes(p.id)).reduce((acc, p) => acc + (p.fileSize || 0), 0)
-            : binStorageBytes;
-
-        try {
-            const deleted = await MediaLibrary.deleteAssetsAsync(toDelete);
-            if (deleted) {
-                const newTotalBytes = totalClearedBytes + bytesToDelete;
-                const newTotalPhotos = totalDeletedPhotos + toDelete.length;
-                setTotalClearedBytes(newTotalBytes);
-                setTotalDeletedPhotos(newTotalPhotos);
-                setBinPhotos(prev => ids ? prev.filter(p => !ids.includes(p.id)) : []);
-                if (!ids) setBinStorageBytes(0);
-                loadCategoryStats();
-            }
-        } catch (error) {
-            console.error('Batch deletion error', error);
-        }
-    }, [binPhotos, binStorageBytes, totalClearedBytes, loadCategoryStats]);
-
-    const restoreFromBin = useCallback((id: string) => {
-        setBinPhotos(prev => prev.filter(p => p.id !== id));
-    }, []);
-
-    const currentPhoto = (currentIndex >= 0 && currentIndex < photos.length) ? photos[currentIndex] : null;
-    const remainingCount = Math.max(0, photos.length - currentIndex);
-    const canUndo = undoStack.length > 0;
-
-    const swipeRight = useCallback(() => {
-        if (currentIndex < 0 || currentIndex >= photos.length) return;
-        const photo = photos[currentIndex];
-        setKeptPhotos(prev => [photo, ...prev]);
-        setUndoStack(prev => [...prev, { photo, action: 'keep' }]);
-        setCurrentIndex(prev => prev + 1);
-        setSessionStats(s => ({ ...s, swiped: s.swiped + 1, kept: s.kept + 1 }));
-    }, [currentIndex, photos]);
-
-    const swipeLeft = useCallback(async () => {
-        if (currentIndex < 0 || currentIndex >= photos.length) return;
-        const photo = photos[currentIndex];
-
-        let fileSize = photo.fileSize || 0;
-        if (!fileSize) {
-            try {
-                const info = await MediaLibrary.getAssetInfoAsync(photo.id, { shouldDownloadFromNetwork: false });
-                const fi = await FileSystem.getInfoAsync(info.localUri || info.uri);
-                if (fi.exists && !fi.isDirectory) fileSize = (fi as any).size ?? 0;
-            } catch { /* ignore */ }
-        }
-        if (!fileSize) fileSize = photo.mediaType === 'video' ? 15 * 1024 * 1024 : 3 * 1024 * 1024;
-
-        const binPhoto: BinPhoto = { ...photo, deletedAt: Date.now(), fileSize };
-        setBinPhotos(prev => {
-            // Prevent same ID from entering twice
-            if (prev.find(p => p.id === photo.id)) return prev;
-            return [binPhoto, ...prev];
-        });
-        setUndoStack(prev => [...prev, { photo, action: 'bin', fileSize }]);
-        setCurrentIndex(prev => prev + 1);
-        setSessionStats(s => ({ ...s, swiped: s.swiped + 1, deleted: s.deleted + 1, mbFreed: s.mbFreed + (fileSize / (1024 * 1024)) }));
-    }, [currentIndex, photos]);
-
-    const undo = useCallback(() => {
-        if (undoStack.length === 0) return;
-        const last = undoStack[undoStack.length - 1];
-        setUndoStack(prev => prev.slice(0, -1));
-        if (last.action === 'keep') {
-            setKeptPhotos(prev => prev.filter(p => p.id !== last.photo.id));
-            setSessionStats(s => ({ ...s, swiped: Math.max(0, s.swiped - 1), kept: Math.max(0, s.kept - 1) }));
-        } else {
-            setBinPhotos(prev => prev.filter(p => p.id !== last.photo.id));
-            const mb = (last.fileSize || 0) / (1024 * 1024);
-            setSessionStats(s => ({ ...s, swiped: Math.max(0, s.swiped - 1), deleted: Math.max(0, s.deleted - 1), mbFreed: Math.max(0, s.mbFreed - mb) }));
-        }
-        setCurrentIndex(prev => Math.max(0, prev - 1));
-    }, [undoStack]);
-    
-    const deepReset = useCallback(async () => {
-        // Clear all persistent storage
-        await AsyncStorage.multiRemove([
-            BIN_STORAGE_KEY,
-            TOTAL_CLEARED_KEY,
-            TOTAL_DELETED_KEY,
-            '@bin_photos_v2', // old keys just in case
-            '@total_cleared_bytes_v2',
-            '@total_deleted_photos_v2'
-        ]);
-        
-        // Reset all in-memory state
+    const deepReset = async () => {
         setPhotos([]);
         setCurrentIndex(0);
         setKeptPhotos([]);
@@ -444,33 +394,29 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         setTotalDeletedPhotos(0);
         setSessionStats({ swiped: 0, kept: 0, deleted: 0, mbFreed: 0 });
         setShowIntro(true);
-        
-        // Force reload stats from empty
-        await loadCategoryStats();
-    }, [loadCategoryStats]);
+        await AsyncStorage.multiRemove([BIN_STORAGE_KEY, TOTAL_CLEARED_KEY, TOTAL_DELETED_KEY, '@auth_token_v1']);
+    };
+
+    const value = {
+        photos, currentIndex, keptPhotos, binPhotos, currentPhoto: photos[currentIndex] || null,
+        remainingCount: photos.length - currentIndex,
+        keptCount: keptPhotos.length,
+        binCount: binPhotos.length,
+        isLoading, isLoadingSession, categoryCounts, sessionStats,
+        totalClearedBytes, totalDeletedPhotos, binStorageBytes, hasMore, isGuest,
+        showIntro, setShowIntro, setUserToken, handleSwipe, undoLast, commitDeletions,
+        restoreFromBin, loadCategoryStats, loadMore, deepReset, endSession
+    };
 
     return (
-        <PhotoContext.Provider
-            value={{
-                photos, currentIndex, keptPhotos, binPhotos,
-                currentPhoto, remainingCount, canUndo,
-                permissionsGranted, isLoading, isLoadingSession,
-                categoryCounts, binStorageBytes, sortMode, hasMore, sessionStats,
-                setSortMode, swipeRight, swipeLeft, undo,
-                commitDeletions, restoreFromBin,
-                startSwipingSession, loadMore, endSession, loadCategoryStats,
-                totalClearedBytes, totalDeletedPhotos,
-                showIntro, setShowIntro, deepReset,
-                userToken, isGuest, setUserToken,
-            }}
-        >
+        <PhotoContext.Provider value={value}>
             {children}
         </PhotoContext.Provider>
     );
 }
 
-export function usePhotos() {
+export const usePhotos = () => {
     const context = useContext(PhotoContext);
-    if (!context) throw new Error('usePhotos must be used within a PhotoProvider');
+    if (!context) throw new Error('usePhotos must be used within PhotoProvider');
     return context;
-}
+};

@@ -9,7 +9,7 @@ import {
     ONBOARDING_COMPLETED_KEY, 
     PERMISSIONS_GRANTED_KEY 
 } from '../lib/firebase';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { Syne_700Bold, Syne_800ExtraBold } from '@expo-google-fonts/syne';
@@ -22,6 +22,7 @@ export default function RootLayout() {
     const router = useRouter();
     const segments = useSegments();
     const [isReady, setIsReady] = useState(false);
+    const isNavigatingRef = useRef(false);
 
     const [fontsLoaded] = useFonts({
         Syne_700Bold,
@@ -33,44 +34,67 @@ export default function RootLayout() {
 
     useEffect(() => {
         async function prepare() {
-            await initAds();
-            setIsReady(true);
+            try {
+                await initAds();
+            } catch (e) {
+                console.warn('AdInit failed', e);
+            } finally {
+                setIsReady(true);
+            }
         }
         prepare();
     }, []);
 
-    // Reactive Navigation Logic
+    // Stabilized Navigation Flow
     useEffect(() => {
+        if (!isReady || !fontsLoaded || isNavigatingRef.current) return;
+
         async function checkFlow() {
-            if (!isReady || !fontsLoaded) return;
+            try {
+                const [completed, token, permissions] = await Promise.all([
+                    AsyncStorage.getItem(ONBOARDING_COMPLETED_KEY),
+                    AsyncStorage.getItem(AUTH_TOKEN_KEY),
+                    AsyncStorage.getItem(PERMISSIONS_GRANTED_KEY)
+                ]);
 
-            const [completed, token, permissions] = await Promise.all([
-                AsyncStorage.getItem(ONBOARDING_COMPLETED_KEY),
-                AsyncStorage.getItem(AUTH_TOKEN_KEY),
-                AsyncStorage.getItem(PERMISSIONS_GRANTED_KEY)
-            ]);
+                // Flatten segments for robust comparison
+                const segmentPath = segments.filter(Boolean).join('/');
+                const rootSegment = segments[0];
 
-            const segment = segments[0];
+                let targetRoute: string | null = null;
 
-            if (completed !== 'true') {
-                if (segment !== 'onboarding') {
-                    router.replace('/onboarding');
+                if (completed !== 'true') {
+                    if (rootSegment !== 'onboarding') {
+                        targetRoute = '/onboarding';
+                    }
+                } else if (!token) {
+                    // Check if we are outside of the (auth) group
+                    if (rootSegment !== '(auth)' && rootSegment !== 'login') {
+                        targetRoute = '/(auth)/login';
+                    }
+                } else if (permissions !== 'true') {
+                    if (rootSegment !== 'permissions') {
+                        targetRoute = '/permissions';
+                    }
+                } else {
+                    // Check if we are outside of (tabs) or main swipe
+                    if (rootSegment !== '(tabs)' && rootSegment !== 'swipe') {
+                        targetRoute = '/(tabs)';
+                    }
                 }
-            } else if (!token) {
-                if (segment !== '(auth)') {
-                    router.replace('/(auth)/login');
+
+                if (targetRoute) {
+                    isNavigatingRef.current = true;
+                    router.replace(targetRoute as any);
+                    // Reset navigating flag after a delay to allow segment update
+                    setTimeout(() => { isNavigatingRef.current = false; }, 500);
+                } else {
+                    // Flow is correct, hide splash
+                    SplashScreen.hideAsync().catch(() => { });
                 }
-            } else if (permissions !== 'true') {
-                if (segment !== 'permissions') {
-                    router.replace('/permissions');
-                }
-            } else {
-                if (segment !== '(tabs)' && segment !== 'swipe') {
-                    router.replace('/(tabs)');
-                }
+            } catch (err) {
+                console.error('Flow check error', err);
             }
-
-            SplashScreen.hideAsync().catch(() => { });
         }
 
         checkFlow();
