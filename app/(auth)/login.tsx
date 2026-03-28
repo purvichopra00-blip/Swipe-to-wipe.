@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
     StyleSheet, View, Text, TextInput, Pressable,
     Dimensions, KeyboardAvoidingView, Platform,
@@ -11,16 +11,14 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { signInWithCredential, PhoneAuthProvider } from 'firebase/auth';
+import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
 import { usePhotos } from '../../contexts/PhotoContext';
 
 const { height: H } = Dimensions.get('window');
 
 export const AUTH_TOKEN_KEY = '@auth_token_v1';
-
-// Firebase Web API Key (safe to expose in mobile apps — Firebase rules protect data)
-const FIREBASE_API_KEY = 'AIzaSyBV7kIh8wXvBsY6ZWRMc8jqtT38XScs1u4';
 
 const COUNTRIES = [
     { name: 'United States', dialCode: '+1', flag: '🇺🇸' },
@@ -38,12 +36,13 @@ const COUNTRIES = [
 export default function LoginScreen() {
     const router = useRouter();
     const { setUserToken } = usePhotos();
+    const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
     const [authMode, setAuthMode] = useState<'phone' | 'otp'>('phone');
     const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[1]); // Default India
     const [isCountryModalVisible, setIsCountryModalVisible] = useState(false);
     const [phone, setPhone] = useState('');
     const [otp, setOtp] = useState('');
-    const [sessionInfo, setSessionInfo] = useState<string | null>(null); // REST API session token
+    const [verificationId, setVerificationId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
 
     const handleGuestMode = async () => {
@@ -60,11 +59,6 @@ export default function LoginScreen() {
         }
     };
 
-    /**
-     * Send OTP using Firebase REST API.
-     * This bypasses the need for a DOM-based RecaptchaVerifier or expo-firebase-recaptcha.
-     * Works in both Expo Go and native EAS builds.
-     */
     const handleSendOtp = async () => {
         if (phone.length < 5) {
             Alert.alert("Invalid Number", "Please enter a valid phone number.");
@@ -75,52 +69,27 @@ export default function LoginScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         try {
+            const phoneProvider = new PhoneAuthProvider(auth);
             const fullPhone = `${selectedCountry.dialCode}${phone}`;
-            const response = await fetch(
-                `https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${FIREBASE_API_KEY}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        phoneNumber: fullPhone,
-                        recaptchaToken: 'test', // Required field; Firebase ignores this for phone number auth
-                    }),
-                }
+            
+            // Using the real FirebaseRecaptchaVerifierModal
+            const vid = await phoneProvider.verifyPhoneNumber(
+                fullPhone,
+                recaptchaVerifier.current!
             );
-
-            const data = await response.json();
-
-            if (!response.ok || data.error) {
-                const msg = data.error?.message || 'Failed to send OTP';
-                // Friendly error for common cases
-                if (msg.includes('INVALID_PHONE_NUMBER')) {
-                    Alert.alert("Invalid Number", "Please check the phone number and try again.");
-                } else if (msg.includes('TOO_MANY_ATTEMPTS')) {
-                    Alert.alert("Too Many Attempts", "Please wait a few minutes before trying again.");
-                } else if (msg.includes('QUOTA_EXCEEDED') || msg.includes('BILLING')) {
-                    Alert.alert("Service Unavailable", "SMS quota exceeded. Please try again later or use Guest mode.");
-                } else {
-                    Alert.alert("Error", msg);
-                }
-                return;
-            }
-
-            setSessionInfo(data.sessionInfo);
+            setVerificationId(vid);
             setAuthMode('otp');
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (error: any) {
-            console.error("OTP send error:", error);
-            Alert.alert("Network Error", "Could not connect. Please check your internet connection.");
+            console.error("Firebase SMS error:", error);
+            Alert.alert("Error", error.message || "Failed to send verification code. Please try again.");
         } finally {
             setIsLoading(false);
         }
     };
 
-    /**
-     * Verify OTP and sign in using Firebase REST API + signInWithCredential.
-     */
     const handleVerifyOtp = async () => {
-        if (!sessionInfo) return;
+        if (!verificationId) return;
         if (otp.length < 6) {
             Alert.alert("Invalid Code", "Please enter the 6-digit code.");
             return;
@@ -128,10 +97,10 @@ export default function LoginScreen() {
 
         setIsLoading(true);
         try {
-            // Use PhoneAuthProvider with the sessionInfo from the REST API
-            const credential = PhoneAuthProvider.credential(sessionInfo, otp);
+            const credential = PhoneAuthProvider.credential(verificationId, otp);
             const userCredential = await signInWithCredential(auth, credential);
 
+            // Success
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             await AsyncStorage.setItem(AUTH_TOKEN_KEY, userCredential.user.uid);
             setUserToken(userCredential.user.uid);
@@ -139,11 +108,7 @@ export default function LoginScreen() {
         } catch (error: any) {
             console.error("Verification error:", error);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            if (error.code === 'auth/invalid-verification-code') {
-                Alert.alert("Wrong Code", "The code you entered is incorrect. Please try again.");
-            } else {
-                Alert.alert("Error", error.message || "Invalid verification code.");
-            }
+            Alert.alert("Error", error.message || "Invalid verification code.");
         } finally {
             setIsLoading(false);
         }
@@ -168,6 +133,12 @@ export default function LoginScreen() {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View style={s.container}>
                 <LinearGradient colors={['#fff0f5', '#ffffff', '#fef1f6']} style={StyleSheet.absoluteFill} />
+
+                <FirebaseRecaptchaVerifierModal
+                    ref={recaptchaVerifier}
+                    firebaseConfig={auth.app.options}
+                    attemptInvisibleVerification={true}
+                />
 
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}

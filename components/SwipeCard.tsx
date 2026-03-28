@@ -8,11 +8,9 @@ import Animated, {
     interpolate,
     Extrapolation,
     SharedValue,
-    withSpring,
 } from 'react-native-reanimated';
 import { Photo } from '../constants/photos';
 import { Ionicons } from '@expo/vector-icons';
-import { useVideoPlayer, VideoView } from 'expo-video';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.3;
@@ -26,39 +24,29 @@ interface SwipeCardProps {
 }
 
 export default function SwipeCard({ photo, index, totalVisible, translateX, isTop }: SwipeCardProps) {
-    const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
-    // Initialize player with null — we'll replace() once we have a playable URI
-    const player = useVideoPlayer(null, (p) => {
-        p.loop = true;
-        p.muted = true;
-    });
+    const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
 
-    // Resolve ph:// → file:// URI for iOS videos
+    // For videos: resolve a playable/thumbnail URI from the ph:// asset
     useEffect(() => {
         if (photo.mediaType !== 'video') return;
         let cancelled = false;
         MediaLibrary.getAssetInfoAsync(photo.id)
             .then(info => {
-                const uri = info.localUri || info.uri;
-                if (!cancelled && uri) {
-                    setResolvedVideoUri(uri);
-                    player.replace({ uri });
+                if (!cancelled) {
+                    // expo-image can render thumbnails from ph:// on iOS
+                    setThumbnailUri(info.localUri || info.uri || photo.url);
                 }
             })
-            .catch(err => console.warn('Failed to resolve video URI:', err));
+            .catch(() => {
+                if (!cancelled) setThumbnailUri(photo.url);
+            });
         return () => { cancelled = true; };
-    }, [photo.id, photo.mediaType]);
+    }, [photo.id, photo.mediaType, photo.url]);
 
-    // Play/pause based on top card status
-    useEffect(() => {
-        if (photo.mediaType !== 'video') return;
-        if (isTop && resolvedVideoUri) {
-            player.play();
-        } else {
-            player.pause();
-        }
-    }, [isTop, resolvedVideoUri, photo.mediaType]);
-
+    // Use resolved thumbnail for videos, direct url for photos
+    const imageSource = photo.mediaType === 'video'
+        ? (thumbnailUri || photo.url)
+        : photo.url;
 
     const cardStyle = useAnimatedStyle(() => {
         if (!isTop) {
@@ -80,11 +68,10 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
                 height: '100%',
                 zIndex: totalVisible - index,
                 transform: [{ scale }, { translateY }],
-                opacity: 1, // Photos must be opaque
+                opacity: 1,
             };
         }
 
-        // Top card: Rotation and translation
         const rotate = interpolate(
             translateX.value,
             [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
@@ -101,11 +88,10 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
                 { translateX: translateX.value },
                 { rotate: `${rotate}deg` },
             ],
-            opacity: 1, // Guarantee opacity
+            opacity: 1,
         };
     });
 
-    // KEEP stamp — only visible when swiping RIGHT (positive X)
     const likeOpacity = useAnimatedStyle(() => {
         if (!isTop || translateX.value <= 0) return { opacity: 0 };
         return {
@@ -118,7 +104,6 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
         };
     });
 
-    // DELETE stamp — only visible when swiping LEFT (negative X)
     const nopeOpacity = useAnimatedStyle(() => {
         if (!isTop || translateX.value >= 0) return { opacity: 0 };
         return {
@@ -131,7 +116,6 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
         };
     });
 
-    // Swipe threshold bar indicator
     const thresholdBarWidth = useAnimatedStyle(() => {
         if (!isTop) return { width: 0 };
         const w = interpolate(
@@ -165,21 +149,26 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
 
     return (
         <Animated.View style={[styles.card, cardStyle]}>
-            {photo.mediaType === 'video' ? (
-                <VideoView
-                    player={player}
-                    style={styles.image}
-                    contentFit="cover"
-                    nativeControls={false}
-                />
-            ) : (
-                <Image
-                    source={photo.url}
-                    style={styles.image}
-                    contentFit="cover"
-                    transition={150}
-                />
+            {/* Both photos and videos use expo-image — it renders thumbnails from ph:// on iOS */
+            /* We use photo.url as the initial source while the higher-res thumbnail is resolving */}
+            <Image
+                source={imageSource}
+                style={styles.image}
+                contentFit="cover"
+                transition={150}
+                priority={isTop ? 'high' : 'normal'}
+                cachePolicy="disk"
+            />
+
+            {/* Video play icon overlay */}
+            {photo.mediaType === 'video' && (
+                <View style={styles.videoOverlay}>
+                    <View style={styles.playButton}>
+                        <Ionicons name="play" size={32} color="#fff" style={{ marginLeft: 4 }} />
+                    </View>
+                </View>
             )}
+
             <LinearGradient
                 colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.75)']}
                 locations={[0.4, 0.7, 1]}
@@ -196,7 +185,7 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
                 <Text style={[styles.stamp, styles.deleteStamp]}>DELETE</Text>
             </Animated.View>
 
-            {/* Swipe threshold bar — at bottom of card */}
+            {/* Swipe threshold bar */}
             {isTop && (
                 <View style={styles.thresholdTrack}>
                     <Animated.View style={[styles.thresholdFill, thresholdBarWidth, thresholdBarColor]} />
@@ -248,10 +237,26 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
     },
+    videoOverlay: {
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 2,
+    },
+    playButton: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     gradient: {
         position: 'absolute',
         left: 0, right: 0, bottom: 0,
         height: '50%',
+        zIndex: 3,
     },
     stampBase: {
         position: 'absolute',
@@ -278,12 +283,8 @@ const styles = StyleSheet.create({
         letterSpacing: 2,
         textTransform: 'uppercase',
     },
-    keepStamp: {
-        color: '#22c55e',
-    },
-    deleteStamp: {
-        color: '#ef4444',
-    },
+    keepStamp: { color: '#22c55e' },
+    deleteStamp: { color: '#ef4444' },
     thresholdTrack: {
         position: 'absolute',
         bottom: 96,
@@ -293,6 +294,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.2)',
         borderRadius: 2,
         overflow: 'hidden',
+        zIndex: 5,
     },
     thresholdFill: {
         height: '100%',
@@ -302,6 +304,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         bottom: 0, left: 0, right: 0,
         padding: 24,
+        zIndex: 4,
     },
     topRow: {
         flexDirection: 'row',
