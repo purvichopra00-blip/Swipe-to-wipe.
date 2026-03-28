@@ -27,28 +27,37 @@ interface SwipeCardProps {
 
 export default function SwipeCard({ photo, index, totalVisible, translateX, isTop }: SwipeCardProps) {
     const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
-    const player = useVideoPlayer(photo.mediaType === 'video' ? (resolvedVideoUri || photo.uri) : null, (p) => {
+    // Initialize player with null — we'll replace() once we have a playable URI
+    const player = useVideoPlayer(null, (p) => {
         p.loop = true;
         p.muted = true;
     });
 
+    // Resolve ph:// → file:// URI for iOS videos
     useEffect(() => {
+        if (photo.mediaType !== 'video') return;
+        let cancelled = false;
+        MediaLibrary.getAssetInfoAsync(photo.id)
+            .then(info => {
+                const uri = info.localUri || info.uri;
+                if (!cancelled && uri) {
+                    setResolvedVideoUri(uri);
+                    player.replace({ uri });
+                }
+            })
+            .catch(err => console.warn('Failed to resolve video URI:', err));
+        return () => { cancelled = true; };
+    }, [photo.id, photo.mediaType]);
+
+    // Play/pause based on top card status
+    useEffect(() => {
+        if (photo.mediaType !== 'video') return;
         if (isTop && resolvedVideoUri) {
             player.play();
         } else {
             player.pause();
         }
-    }, [isTop, resolvedVideoUri, player]);
-
-    useEffect(() => {
-        if (photo.mediaType === 'video' && !resolvedVideoUri) {
-            MediaLibrary.getAssetInfoAsync(photo.id).then(info => {
-                setResolvedVideoUri(info.localUri || info.uri);
-            }).catch(err => {
-                console.warn('Failed to resolve video URI:', err);
-            });
-        }
-    }, [photo.id, photo.mediaType]);
+    }, [isTop, resolvedVideoUri, photo.mediaType]);
 
 
     const cardStyle = useAnimatedStyle(() => {
@@ -198,7 +207,7 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
             <View style={styles.infoContainer}>
                 <View style={styles.topRow}>
                     <Text style={styles.date} numberOfLines={1}>
-                        {new Date(photo.creationTime).toLocaleDateString(undefined, {
+                        {new Date(photo.creationTime || 0).toLocaleDateString(undefined, {
                             weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
                         })}
                     </Text>

@@ -10,6 +10,7 @@ export interface Photo {
     fileSize?: number;
     width?: number;
     height?: number;
+    duration?: number;
 }
 
 export const PHOTOS: Photo[] = [
