@@ -17,7 +17,7 @@ import Animated, { Layout, FadeIn, FadeOut, useSharedValue, useAnimatedStyle, wi
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AUTH_TOKEN_KEY } from '../(auth)/login';
-import { auth } from '../../lib/firebase';
+import { getFirebaseAuth } from '../../lib/firebase';
 import { deleteUser } from 'firebase/auth';
 import { ONBOARDING_COMPLETED_KEY } from '../onboarding';
 import { PERMISSIONS_GRANTED_KEY } from '../permissions';
@@ -163,6 +163,7 @@ export default function BinScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
+                            const auth = getFirebaseAuth();
                             const user = auth.currentUser;
                             if (user) {
                                 await deleteUser(user);

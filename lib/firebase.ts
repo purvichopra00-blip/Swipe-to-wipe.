@@ -12,10 +12,14 @@ const firebaseConfig = {
     measurementId: "G-QD6DNG6V0Y"
 };
 
+// Singleton App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Using the simplest possible registration to avoid the internal crash
-const auth = getAuth(app);
+// Simple lazy auth without advanced persistence to avoid crashing
+let authInstance: any = null;
+export const getFirebaseAuth = () => {
+    if (!authInstance) authInstance = getAuth(app);
+    return authInstance;
+};
 
-export { auth };
 export default app;

@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth } from '../../lib/firebase';
+import { getFirebaseAuth } from '../../lib/firebase';
 import { usePhotos } from '../../contexts/PhotoContext';
 
 const { height: H } = Dimensions.get('window');
@@ -41,6 +41,7 @@ export default function LoginScreen() {
     const [otp, setOtp] = useState('');
     const [sessionInfo, setSessionInfo] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const auth = getFirebaseAuth();
 
     const handleGuestMode = async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
