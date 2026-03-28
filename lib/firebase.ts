@@ -12,15 +12,22 @@ const firebaseConfig = {
     measurementId: "G-QD6DNG6V0Y"
 };
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+let app;
+if (!getApps().length) {
+    app = initializeApp(firebaseConfig);
+} else {
+    app = getApp();
+}
 
 let auth;
 try {
-  auth = getAuth(app);
+    // Try to get existing auth first to avoid double initialization
+    auth = getAuth(app);
 } catch (e) {
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
+    // If not registered yet, initialize it
+    auth = initializeAuth(app, {
+        persistence: getReactNativePersistence(AsyncStorage)
+    });
 }
 
 export { auth };
