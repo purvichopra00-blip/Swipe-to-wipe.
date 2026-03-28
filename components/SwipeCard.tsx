@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Photo } from '../constants/photos';
 import { Ionicons } from '@expo/vector-icons';
+import { useVideoPlayer, VideoView } from 'expo-video';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.3;
@@ -26,14 +27,13 @@ interface SwipeCardProps {
 export default function SwipeCard({ photo, index, totalVisible, translateX, isTop }: SwipeCardProps) {
     const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
 
-    // For videos: resolve a playable/thumbnail URI from the ph:// asset
+    // Resolve a playable/thumbnail URI from the ph:// asset
     useEffect(() => {
         if (photo.mediaType !== 'video') return;
         let cancelled = false;
         MediaLibrary.getAssetInfoAsync(photo.id)
             .then(info => {
                 if (!cancelled) {
-                    // expo-image can render thumbnails from ph:// on iOS
                     setThumbnailUri(info.localUri || info.uri || photo.url);
                 }
             })
@@ -42,6 +42,16 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
             });
         return () => { cancelled = true; };
     }, [photo.id, photo.mediaType, photo.url]);
+
+    // Handle video player for top card
+    const player = useVideoPlayer(
+        (isTop && photo.mediaType === 'video') ? (thumbnailUri || photo.url) : null,
+        (p) => {
+            p.loop = true;
+            p.muted = false;
+            p.play();
+        }
+    );
 
     // Use resolved thumbnail for videos, direct url for photos
     const imageSource = photo.mediaType === 'video'
@@ -151,17 +161,26 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
         <Animated.View style={[styles.card, cardStyle]}>
             {/* Both photos and videos use expo-image — it renders thumbnails from ph:// on iOS */
             /* We use photo.url as the initial source while the higher-res thumbnail is resolving */}
-            <Image
-                source={imageSource}
-                style={styles.image}
-                contentFit="cover"
-                transition={150}
-                priority={isTop ? 'high' : 'normal'}
-                cachePolicy="disk"
-            />
+            {(isTop && photo.mediaType === 'video') ? (
+                <VideoView
+                    player={player}
+                    style={styles.image}
+                    contentFit="cover"
+                    nativeControls={false}
+                />
+            ) : (
+                <Image
+                    source={imageSource}
+                    style={styles.image}
+                    contentFit="cover"
+                    transition={150}
+                    priority={isTop ? 'high' : 'normal'}
+                    cachePolicy="disk"
+                />
+            )}
 
-            {/* Video play icon overlay */}
-            {photo.mediaType === 'video' && (
+            {/* Video play icon overlay (only shown when not playing) */}
+            {photo.mediaType === 'video' && !isTop && (
                 <View style={styles.videoOverlay}>
                     <View style={styles.playButton}>
                         <Ionicons name="play" size={32} color="#fff" style={{ marginLeft: 4 }} />
