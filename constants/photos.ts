@@ -1,16 +1,15 @@
 export interface Photo {
     id: string;
     url: string;
-    title: string;
-    photographer: string;
-    category: string;
+    title?: string;
+    photographer?: string;
+    category?: string;
     filename?: string;
     mediaType?: string;
     creationTime?: number;
     fileSize?: number;
     width?: number;
     height?: number;
-    duration?: number;
 }
 
 export const PHOTOS: Photo[] = [

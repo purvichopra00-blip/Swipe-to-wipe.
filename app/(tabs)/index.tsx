@@ -12,9 +12,11 @@ import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import * as Sharing from 'expo-sharing';
+import { Image } from 'expo-image';
 import Animated, {
     useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS, Easing,
-    interpolate, Extrapolation, withSequence, withRepeat, useDerivedValue, useAnimatedProps, withDelay
+    interpolate, Extrapolation, withSequence, withRepeat, useDerivedValue, useAnimatedProps, withDelay,
+    FadeInDown, cancelAnimation
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -123,7 +125,7 @@ export default function SwipeScreen() {
         swipeRight, swipeLeft, undo, canUndo, sessionStats,
         isLoadingSession, startSwipingSession, loadCategoryStats,
         sortMode, setSortMode, endSession, permissionsGranted,
-        categoryCounts, totalClearedBytes, totalDeletedPhotos,
+        categoryCounts, totalClearedBytes, totalDeletedPhotos, totalKeptPhotos, totalBinnedPhotos,
         showIntro, setShowIntro
     } = usePhotos();
 
@@ -145,6 +147,8 @@ export default function SwipeScreen() {
     const [adTriggerCounter, setAdTriggerCounter] = useState(0);
     const [interstitial, setInterstitial] = useState<any>(null);
     const [adLoaded, setAdLoaded] = useState(false);
+    
+    const [showFullPreview, setShowFullPreview] = useState(false);
 
     useEffect(() => {
         const ad = createSafeInterstitial(AdUnits.INTERSTITIAL);
@@ -179,24 +183,35 @@ export default function SwipeScreen() {
     const celebScale = useRef(new RNAnimated.Value(0.8)).current;
     const celebOpacity = useRef(new RNAnimated.Value(0)).current;
     const orbitSpin = useRef(new RNAnimated.Value(0)).current;
-
     const [storage, setStorage] = useState<{ used: number; total: number } | null>(null);
-    const introShownRef = useRef(true); // Changed to true to skip intro for now
+    const hasInitialAutoStarted = useRef(false);
 
-    // Auto start session on focus or when permissions first load
+    // Image Pre-loading: Fetch next 3 images to prevent flicker during fast swiping
+    useEffect(() => {
+        if (photos && photos.length > 0) {
+            const nextPhotos = photos.slice(currentIndex, currentIndex + 4);
+            nextPhotos.forEach(p => {
+                if (p.url) Image.prefetch(p.url);
+            });
+        }
+    }, [currentIndex, photos]);
+
+    // Auto start session ONLY after intro is finished or if intro is skipped
     useFocusEffect(
         useCallback(() => {
-            if (permissionsGranted && remainingCount === 0 && !isLoadingSession) {
+            if (!showIntro && permissionsGranted && remainingCount === 0 && !isLoadingSession && !hasInitialAutoStarted.current) {
+                hasInitialAutoStarted.current = true;
                 startSwipingSession('Random');
             }
-        }, [permissionsGranted, remainingCount, isLoadingSession, startSwipingSession])
+        }, [showIntro, permissionsGranted, remainingCount, isLoadingSession, startSwipingSession])
     );
 
     useEffect(() => {
-        if (permissionsGranted && remainingCount === 0 && !isLoadingSession && !currentPhoto) {
+        if (!showIntro && permissionsGranted && remainingCount === 0 && !isLoadingSession && !currentPhoto && !hasInitialAutoStarted.current) {
+            hasInitialAutoStarted.current = true;
             startSwipingSession('Random');
         }
-    }, [permissionsGranted, remainingCount, isLoadingSession, currentPhoto, startSwipingSession]);
+    }, [showIntro, permissionsGranted, remainingCount, isLoadingSession, currentPhoto, startSwipingSession]);
 
     useEffect(() => {
         if (permissionsGranted) {
@@ -209,8 +224,17 @@ export default function SwipeScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         startSwipingSession(category);
         setShowIntro(false);
-        introShownRef.current = true;
     };
+
+    // Auto transition from initial welcome splash to swiping session after 3 seconds
+    useEffect(() => {
+        if (showIntro) {
+            const timer = setTimeout(() => {
+                enterSession('Random');
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [showIntro]);
 
     const fmt = (b: number) => b > 1024 ** 2 * 900 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${(b / 1024 ** 2).toFixed(1)} MB`;
 
@@ -316,25 +340,25 @@ export default function SwipeScreen() {
     }, [setSortMode, startSwipingSession]);
 
     // Swipe Tutorial Logic
-    const TUTORIAL_SEEN_KEY = '@swipe_tutorial_seen_v3';
+    const TUTORIAL_SEEN_KEY = '@swipe_tutorial_seen_v5';
     const [showTutorial, setShowTutorial] = useState(false);
     const handOpacity = useSharedValue(0);
 
     const dismissTutorial = useCallback(async () => {
         if (showTutorial) {
+            cancelAnimation(translateX);
             setShowTutorial(false);
             await AsyncStorage.setItem(TUTORIAL_SEEN_KEY, 'true');
         }
     }, [showTutorial]);
 
+    const hasSeenTutorialThisSession = useRef(false);
+
     useEffect(() => {
-        async function checkTutorial() {
-            const seen = await AsyncStorage.getItem(TUTORIAL_SEEN_KEY);
-            if (seen !== 'true' && currentPhoto) {
-                setShowTutorial(true);
-            }
+        if (currentPhoto && !hasSeenTutorialThisSession.current) {
+            setShowTutorial(true);
+            hasSeenTutorialThisSession.current = true;
         }
-        checkTutorial();
     }, [currentPhoto]);
 
     useEffect(() => {
@@ -374,8 +398,9 @@ export default function SwipeScreen() {
     const handleSwipeRight = useCallback(() => {
         dismissTutorial();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        cancelAnimation(translateX);
+        translateX.value = 0; // Reset FIRST to prevent new card from appearing off-screen
         swipeRight();
-        translateX.value = 0;
         setAdTriggerCounter(prev => {
             const next = prev + 1;
             if (next >= AD_CONFIG.SWIPES_PER_INTERSTITIAL) {
@@ -389,8 +414,9 @@ export default function SwipeScreen() {
         dismissTutorial();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         playDeleteSound();
+        cancelAnimation(translateX);
+        translateX.value = 0; // Reset FIRST
         swipeLeft();
-        translateX.value = 0;
         setAdTriggerCounter(prev => {
             const next = prev + 1;
             if (next >= AD_CONFIG.SWIPES_PER_INTERSTITIAL) {
@@ -401,43 +427,54 @@ export default function SwipeScreen() {
     }, [dismissTutorial, swipeLeft, translateX, playDeleteSound, showAd]);
 
     const panGesture = Gesture.Pan()
-        .onBegin(() => {
+        .activeOffsetX([-10, 10]) // Prevent jitter on vertical scroll
+        .onStart((e) => {
             if (showTutorial) runOnJS(dismissTutorial)();
         })
         .onUpdate((e) => {
             translateX.value = e.translationX;
+            // Immediate haptic feedback on threshold cross
             if (
                 (e.translationX > SWIPE_THRESHOLD && e.translationX - e.velocityX * 0.016 <= SWIPE_THRESHOLD) ||
                 (e.translationX < -SWIPE_THRESHOLD && e.translationX - e.velocityX * 0.016 >= -SWIPE_THRESHOLD)
             ) { runOnJS(Haptics.selectionAsync)(); }
         })
         .onEnd((e) => {
-            const velocityEffect = e.velocityX * 0.1;
+            const velocityEffect = e.velocityX * 0.2; // Slightly more emphasis on velocity
             const finalX = e.translationX + velocityEffect;
 
             if (finalX > SWIPE_THRESHOLD) {
                 translateX.value = withSpring(W * 1.5, {
-                    velocity: e.velocityX,
-                    stiffness: 110,
-                    damping: 14,
-                    mass: 0.4
+                    damping: 20,
+                    stiffness: 150,
+                    mass: 0.8,
+                    velocity: e.velocityX
                 }, () => runOnJS(handleSwipeRight)());
             } else if (finalX < -SWIPE_THRESHOLD) {
                 translateX.value = withSpring(-W * 1.5, {
-                    velocity: e.velocityX,
-                    stiffness: 110,
-                    damping: 14,
-                    mass: 0.4
+                    damping: 20,
+                    stiffness: 150,
+                    mass: 0.8,
+                    velocity: e.velocityX
                 }, () => runOnJS(handleSwipeLeft)());
             } else {
                 translateX.value = withSpring(0, {
-                    velocity: e.velocityX,
-                    damping: 30,
-                    stiffness: 350,
-                    mass: 0.4
+                    damping: 20,
+                    stiffness: 150,
+                    mass: 0.8,
+                    velocity: e.velocityX
                 });
             }
         });
+
+    const longPressGesture = Gesture.LongPress()
+        .minDuration(400)
+        .onStart(() => {
+            runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Heavy);
+            runOnJS(setShowFullPreview)(true);
+        });
+
+    const combinedGesture = Gesture.Simultaneous(panGesture, longPressGesture);
 
 
 
@@ -477,27 +514,27 @@ export default function SwipeScreen() {
                         <Text style={s.introSub}>Here's your gallery at a glance</Text>
                     </FadeSlideIn>
                     <View style={s.introStatsRow}>
-                        <ScalePress style={s.introStatCard} onPress={() => enterSession('Random')}>
+                        <View style={s.introStatCard}>
                             <View style={[s.introStatIconWrap, { backgroundColor: 'rgba(99,102,241,0.12)' }]}>
                                 <Ionicons name="image" size={24} color="#6366f1" />
                             </View>
                             <CountUp to={categoryCounts.photos} delay={400} style={s.introStatNum} />
                             <Text style={s.introStatLabel}>Photos</Text>
-                        </ScalePress>
-                        <ScalePress style={s.introStatCard} onPress={() => enterSession('Videos')}>
+                        </View>
+                        <View style={s.introStatCard}>
                             <View style={[s.introStatIconWrap, { backgroundColor: 'rgba(236,72,153,0.12)' }]}>
                                 <Ionicons name="videocam" size={24} color="#ec4899" />
                             </View>
                             <CountUp to={categoryCounts.videos} delay={600} style={s.introStatNum} />
                             <Text style={s.introStatLabel}>Videos</Text>
-                        </ScalePress>
-                        <ScalePress style={s.introStatCard} onPress={() => enterSession('Screenshots')}>
+                        </View>
+                        <View style={s.introStatCard}>
                             <View style={[s.introStatIconWrap, { backgroundColor: 'rgba(34,197,94,0.12)' }]}>
                                 <Ionicons name="phone-portrait" size={24} color="#22c55e" />
                             </View>
                             <CountUp to={categoryCounts.screenshots} delay={800} style={s.introStatNum} />
                             <Text style={s.introStatLabel}>Screenshots</Text>
-                        </ScalePress>
+                        </View>
                     </View>
                     {storage && (
                         <FadeSlideIn delay={900} style={s.introStorageWrap}>
@@ -552,7 +589,11 @@ export default function SwipeScreen() {
                 </View>
 
                 <View style={s.filterPill}>
-                    <Text style={s.pillCount}>{remainingCount || 0}</Text>
+                    <Ionicons name="heart" size={12} color="#22c55e" style={{ marginRight: 4 }} />
+                    <Text style={s.pillCount}>{totalKeptPhotos}</Text>
+                    <View style={s.pillSeparator} />
+                    <Ionicons name="close" size={16} color="#ef4444" style={{ marginRight: 4 }} />
+                    <Text style={s.pillTotal}>{totalBinnedPhotos}</Text>
                 </View>
             </View>
 
@@ -565,12 +606,26 @@ export default function SwipeScreen() {
                     </View>
                 ) : currentPhoto ? (
                     <View style={s.cardContainerWrapper}>
-                        <GestureDetector gesture={panGesture}>
+                        <GestureDetector gesture={combinedGesture}>
                             <Animated.View style={s.cardContainer}>
                                 {renderCards()}
                             </Animated.View>
                         </GestureDetector>
                         <Animated.View style={[s.ghostHandContainer, handStyle]} pointerEvents="none">
+                            <View style={s.ghostHandLabels}>
+                                <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 1]) }]}>
+                                    <View style={[s.ghostLabelPill, { backgroundColor: '#22c55e' }]}>
+                                        <Ionicons name="heart" size={14} color="#fff" />
+                                        <Text style={s.ghostLabelTxt}>Swipe Right to Keep</Text>
+                                    </View>
+                                </Animated.View>
+                                <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, -SWIPE_THRESHOLD], [0, 1]) }]}>
+                                    <View style={[s.ghostLabelPill, { backgroundColor: '#ef4444' }]}>
+                                        <Ionicons name="trash" size={14} color="#fff" />
+                                        <Text style={s.ghostLabelTxt}>Swipe Left to Delete</Text>
+                                    </View>
+                                </Animated.View>
+                            </View>
                             <View style={s.ghostHandCircle}>
                                 <FontAwesome5 name="hand-pointer" size={30} color="#ffffff" style={{ marginLeft: 6, marginTop: 4, transform: [{ rotate: '-15deg' }] }} />
                             </View>
@@ -592,7 +647,7 @@ export default function SwipeScreen() {
 
             {/* Action Bar */}
             {currentPhoto && (
-                <View style={[s.actions, { paddingBottom: Math.max(insets.bottom, 20) + 84 }]}>
+                <View style={[s.actions, { paddingBottom: Math.max(insets.bottom, 20) + 144 }]}>
                     <ScalePress
                         style={[s.smallBtn, !canUndo && { opacity: 0.3 }]}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); undo(); }}
@@ -728,7 +783,7 @@ export default function SwipeScreen() {
                             <ConfettiCannon count={80} origin={{ x: W / 2, y: -20 }} fallSpeed={2500} fadeOut colors={['#ff6b6b', '#ff8e53', '#fca5a5', '#ec4899', '#fcd34d']} />
                         )}
                         <View style={s.celebIconWrap}>
-                            <Text style={s.celebEmoji}>≡ƒÄë</Text>
+                            <Text style={s.celebEmoji}>🎉</Text>
                             <RNAnimated.View style={[s.orbitContainer, { transform: [{ rotate: orbitSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }]}>
                                 <View style={s.orbitDot} />
                             </RNAnimated.View>
@@ -853,7 +908,7 @@ export default function SwipeScreen() {
                                         <View style={{ flex: 1 }}>
                                             <Text style={{ fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 }}>Dimensions</Text>
                                             <Text style={{ fontFamily: 'DMSans_700Bold', color: '#1f2937' }}>
-                                                {detailedInfo.width} ├ù {detailedInfo.height}
+                                                {detailedInfo.width} × {detailedInfo.height}
                                             </Text>
                                         </View>
                                     </View>
@@ -872,8 +927,62 @@ export default function SwipeScreen() {
                 </Pressable>
             </Modal>
 
+            {/* Full Preview Modal */}
+            <Modal
+                visible={showFullPreview}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowFullPreview(false)}
+            >
+                <Pressable
+                    style={s.fullPreviewOverlay}
+                    onPress={() => setShowFullPreview(false)}
+                >
+                    <StatusBar barStyle="light-content" />
+                    <LinearGradient
+                        colors={['rgba(0,0,0,0.92)', 'rgba(0,0,0,0.85)']}
+                        style={StyleSheet.absoluteFill}
+                    />
+                    
+                    <Animated.View 
+                        entering={FadeInDown.duration(400)}
+                        style={s.fullPreviewContent}
+                    >
+                        {currentPhoto && (
+                            currentPhoto.mediaType === 'video' ? (
+                                <Image
+                                    source={currentPhoto.url}
+                                    style={s.fullPreviewImage}
+                                    contentFit="contain"
+                                />
+                            ) : (
+                                <Image
+                                    source={currentPhoto.url}
+                                    style={s.fullPreviewImage}
+                                    contentFit="contain"
+                                />
+                            )
+                        )}
+                        
+                        <View style={s.fullPreviewHeader}>
+                            <ScalePress 
+                                style={s.fullPreviewClose}
+                                onPress={() => setShowFullPreview(false)}
+                            >
+                                <Ionicons name="close-circle" size={44} color="#ffffff" />
+                            </ScalePress>
+                        </View>
+                        
+                        <View style={s.fullPreviewFooter}>
+                            <Text style={s.fullPreviewTitle}>Full Preview</Text>
+                            <Text style={s.fullPreviewSub}>Release to return to swiping</Text>
+                        </View>
+                    </Animated.View>
+                </Pressable>
+            </Modal>
+
             {/* Bottom Banner Ad */}
-            <View style={{ position: 'absolute', bottom: insets.bottom + 8, left: 0, right: 0, alignItems: 'center' }}>
+            <View style={{ position: 'absolute', bottom: Math.max(insets.bottom, 20) + 72, left: 0, right: 0, alignItems: 'center' }}>
                 <AppBannerAd
                     unitId={AdUnits.BANNER}
                     size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
@@ -997,8 +1106,9 @@ const s = StyleSheet.create({
         borderWidth: 1.5, borderColor: '#fef2f2',
     },
     filterText: { fontFamily: 'DMSans_700Bold', color: '#6b7280', fontSize: 13 },
-    pillSeparator: { width: 1.5, height: 14, backgroundColor: '#f3f4f6', marginHorizontal: 10 },
-    pillCount: { fontFamily: 'Syne_800ExtraBold', color: '#ff6b6b', fontSize: 16, letterSpacing: 0.5 },
+    pillCount: { fontFamily: 'Syne_700Bold', color: '#22c55e', fontSize: 13 },
+    pillTotal: { fontFamily: 'Syne_700Bold', color: '#ef4444', fontSize: 13 },
+    pillSeparator: { width: 1.5, height: 12, backgroundColor: '#f3f4f6', marginHorizontal: 8 },
 
     cardArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
     cardContainerWrapper: { width: W * 0.9, height: H * 0.58, position: 'relative' },
@@ -1013,11 +1123,21 @@ const s = StyleSheet.create({
     goBackTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
 
     ghostHandContainer: { position: 'absolute', width: '100%', height: '100%', zIndex: 1000, elevation: 20, alignItems: 'center', justifyContent: 'center' },
+    ghostHandLabels: { position: 'absolute', width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
+    ghostLabel: { position: 'absolute', width: '100%', alignItems: 'center' },
+    ghostLabelPill: {
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+        paddingHorizontal: 20, paddingVertical: 12, borderRadius: 100,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 10,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)'
+    },
+    ghostLabelTxt: { fontFamily: 'Syne_700Bold', color: '#fff', fontSize: 16, letterSpacing: 0.5 },
     ghostHandCircle: {
         width: 70, height: 70, borderRadius: 35,
         backgroundColor: 'rgba(255,107,107,0.95)',
         alignItems: 'center', justifyContent: 'center',
-        shadowColor: 'rgba(255,107,107,0.5)', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16, elevation: 8
+        shadowColor: 'rgba(255,107,107,0.5)', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16, elevation: 8,
+        marginTop: 60 // Position hand below the labels
     },
 
     actions: {
@@ -1117,4 +1237,60 @@ const s = StyleSheet.create({
     celebPrimaryTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
     celebSecBtn: { paddingVertical: 12, paddingHorizontal: 24 },
     celebSecTxt: { fontFamily: 'DMSans_700Bold', color: '#9ca3af', fontSize: 15 },
+
+    /* —————————————————— Full Preview —————————————————— */
+    fullPreviewOverlay: {
+        flex: 1,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    fullPreviewContent: {
+        width: W * 0.9,
+        height: H * 0.75,
+        borderRadius: 32,
+        overflow: 'hidden',
+        backgroundColor: '#111',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 20 },
+        shadowOpacity: 0.5,
+        shadowRadius: 40,
+        elevation: 25,
+    },
+    fullPreviewImage: {
+        width: '100%',
+        height: '100%',
+    },
+    fullPreviewHeader: {
+        position: 'absolute',
+        top: 20,
+        right: 20,
+        zIndex: 100,
+    },
+    fullPreviewClose: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+    },
+    fullPreviewFooter: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: 30,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        alignItems: 'center',
+    },
+    fullPreviewTitle: {
+        fontFamily: 'Syne_700Bold',
+        color: '#fff',
+        fontSize: 24,
+        marginBottom: 4,
+    },
+    fullPreviewSub: {
+        fontFamily: 'DMSans_500Medium',
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: 14,
+    },
 });

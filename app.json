@@ -16,32 +16,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.purvichopra.swipetowipe",
-      "privacyManifests": {
-        "NSPrivacyAccessedAPITypes": [
-          {
-            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
-            "NSPrivacyAccessedAPITypeReasons": [
-              "C617.1"
-            ]
-          },
-          {
-            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
-            "NSPrivacyAccessedAPITypeReasons": [
-              "7D9A.1"
-            ]
-          },
-          {
-            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
-            "NSPrivacyAccessedAPITypeReasons": [
-              "CA92.1"
-            ]
-          }
-        ]
-      },
+      "buildNumber": "17",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "PhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
-        "PhotoLibraryAddUsageDescription": "Swipe to Wipe needs permission to save recovered photos back to your gallery."
+        "NSPhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
+        "NSPhotoLibraryAddUsageDescription": "Swipe to Wipe needs permission to save recovered photos back to your gallery."
       }
     },
     "android": {
@@ -77,7 +56,19 @@
         }
       ],
       "expo-localization",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "newArchEnabled": true,
+            "useModularHeaders": true
+          },
+          "android": {
+            "newArchEnabled": true
+          }
+        }
+      ]
     ],
     "extra": {
       "router": {

@@ -7,9 +7,8 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import * as MediaLibrary from 'expo-media-library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { PERMISSIONS_GRANTED_KEY } from '../lib/firebase';
 
-
+export const PERMISSIONS_GRANTED_KEY = '@permissions_granted_v1';
 
 export default function PermissionsScreen() {
     const router = useRouter();

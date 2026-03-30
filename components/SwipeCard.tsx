@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, Dimensions } from 'react-native';
+import React, { useState, useEffect, memo } from 'react';
+import { StyleSheet, View, Text, Dimensions, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
     useAnimatedStyle,
@@ -24,84 +25,63 @@ interface SwipeCardProps {
     isTop: boolean;
 }
 
-export default function SwipeCard({ photo, index, totalVisible, translateX, isTop }: SwipeCardProps) {
-    const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+const SwipeCard = memo(({ photo, index, totalVisible, translateX, isTop }: SwipeCardProps) => {
+    const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
+    
+    const player = useVideoPlayer(photo.mediaType === 'video' ? (resolvedVideoUri || photo.url) : null, (p) => {
+        p.loop = true;
+        p.muted = true;
+    });
 
-    // Resolve a playable/thumbnail URI from the ph:// asset
     useEffect(() => {
-        if (photo.mediaType !== 'video') return;
-        let cancelled = false;
-        MediaLibrary.getAssetInfoAsync(photo.id)
-            .then(info => {
-                if (!cancelled) {
-                    setThumbnailUri(info.localUri || info.uri || photo.url);
-                }
-            })
-            .catch(() => {
-                if (!cancelled) setThumbnailUri(photo.url);
+        if (photo.mediaType === 'video' && !resolvedVideoUri) {
+            MediaLibrary.getAssetInfoAsync(photo.id).then(info => {
+                setResolvedVideoUri(info.localUri || info.uri);
+            }).catch(err => {
+                console.warn('Failed to resolve video URI:', err);
             });
-        return () => { cancelled = true; };
-    }, [photo.id, photo.mediaType, photo.url]);
-
-    // Handle video player for top card
-    const player = useVideoPlayer(
-        (isTop && photo.mediaType === 'video') ? (thumbnailUri || photo.url) : null,
-        (p) => {
-            p.loop = true;
-            p.muted = false;
-            p.play();
         }
-    );
+    }, [photo.id, photo.mediaType]);
 
-    // Use resolved thumbnail for videos, direct url for photos
-    const imageSource = photo.mediaType === 'video'
-        ? (thumbnailUri || photo.url)
-        : photo.url;
+    useEffect(() => {
+        if (isTop && photo.mediaType === 'video') {
+            player.play();
+        } else {
+            player.pause();
+        }
+    }, [isTop, player, photo.mediaType]);
 
+    // 1. Optimized Animation: Only animate the top card
     const cardStyle = useAnimatedStyle(() => {
         if (!isTop) {
-            const scale = interpolate(
-                Math.abs(translateX.value),
-                [0, SWIPE_THRESHOLD],
-                [1 - index * 0.04, 1 - (index - 1) * 0.04],
-                Extrapolation.CLAMP
-            );
-            const translateY = interpolate(
-                Math.abs(translateX.value),
-                [0, SWIPE_THRESHOLD],
-                [index * 10, (index - 1) * 10],
-                Extrapolation.CLAMP
-            );
+            // Background cards: Static transform for performance
             return {
-                position: 'absolute',
-                width: '100%',
-                height: '100%',
+                transform: [
+                    { scale: 1 - index * 0.04 },
+                    { translateY: index * 10 }
+                ],
                 zIndex: totalVisible - index,
-                transform: [{ scale }, { translateY }],
-                opacity: 1,
             };
         }
 
+        // Top card: Rotation and translation
         const rotate = interpolate(
             translateX.value,
             [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
-            [-25, 0, 25],
+            [-6, 0, 6], // Extra-tight rotation for high-speed stability
             Extrapolation.CLAMP
         );
 
         return {
-            position: 'absolute',
-            width: '100%',
-            height: '100%',
             zIndex: totalVisible,
             transform: [
                 { translateX: translateX.value },
                 { rotate: `${rotate}deg` },
             ],
-            opacity: 1,
         };
     });
 
+    // KEEP stamp — only visible when swiping RIGHT (positive X)
     const likeOpacity = useAnimatedStyle(() => {
         if (!isTop || translateX.value <= 0) return { opacity: 0 };
         return {
@@ -114,6 +94,7 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
         };
     });
 
+    // DELETE stamp — only visible when swiping LEFT (negative X)
     const nopeOpacity = useAnimatedStyle(() => {
         if (!isTop || translateX.value >= 0) return { opacity: 0 };
         return {
@@ -124,23 +105,6 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
                 Extrapolation.CLAMP
             ),
         };
-    });
-
-    const thresholdBarWidth = useAnimatedStyle(() => {
-        if (!isTop) return { width: 0 };
-        const w = interpolate(
-            Math.abs(translateX.value),
-            [0, SWIPE_THRESHOLD],
-            [0, 100],
-            Extrapolation.CLAMP
-        );
-        return { width: `${w}%` };
-    });
-
-    const thresholdBarColor = useAnimatedStyle(() => {
-        if (!isTop) return { backgroundColor: 'transparent' };
-        const isRight = translateX.value > 0;
-        return { backgroundColor: isRight ? '#22c55e' : '#ef4444' };
     });
 
     const formatDuration = (seconds?: number) => {
@@ -158,124 +122,111 @@ export default function SwipeCard({ photo, index, totalVisible, translateX, isTo
     };
 
     return (
-        <Animated.View style={[styles.card, cardStyle]}>
-            {/* Both photos and videos use expo-image — it renders thumbnails from ph:// on iOS */
-            /* We use photo.url as the initial source while the higher-res thumbnail is resolving */}
-            {(isTop && photo.mediaType === 'video') ? (
-                <VideoView
-                    player={player}
-                    style={styles.image}
-                    contentFit="cover"
-                    nativeControls={false}
-                />
-            ) : (
-                <Image
-                    source={imageSource}
-                    style={styles.image}
-                    contentFit="cover"
-                    transition={150}
-                    priority={isTop ? 'high' : 'normal'}
-                    cachePolicy="disk"
-                />
-            )}
-
-            {/* Video play icon overlay (only shown when not playing) */}
-            {photo.mediaType === 'video' && !isTop && (
-                <View style={styles.videoOverlay}>
-                    <View style={styles.playButton}>
-                        <Ionicons name="play" size={32} color="#fff" style={{ marginLeft: 4 }} />
-                    </View>
-                </View>
-            )}
-
-            <LinearGradient
-                colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.75)']}
-                locations={[0.4, 0.7, 1]}
-                style={styles.gradient}
-            />
-
-            {/* KEEP Stamp */}
-            <Animated.View style={[styles.stampBase, styles.keepStampPos, likeOpacity]}>
-                <Text style={[styles.stamp, styles.keepStamp]}>KEEP</Text>
-            </Animated.View>
-
-            {/* DELETE Stamp */}
-            <Animated.View style={[styles.stampBase, styles.deleteStampPos, nopeOpacity]}>
-                <Text style={[styles.stamp, styles.deleteStamp]}>DELETE</Text>
-            </Animated.View>
-
-            {/* Swipe threshold bar */}
-            {isTop && (
-                <View style={styles.thresholdTrack}>
-                    <Animated.View style={[styles.thresholdFill, thresholdBarWidth, thresholdBarColor]} />
-                </View>
-            )}
-
-            {/* Photo info */}
-            <View style={styles.infoContainer}>
-                <View style={styles.topRow}>
-                    <Text style={styles.date} numberOfLines={1}>
-                        {new Date(photo.creationTime || 0).toLocaleDateString(undefined, {
-                            weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
-                        })}
-                    </Text>
-                    <View style={styles.metaBadges}>
-                        {photo.fileSize ? (
-                            <View style={styles.badge}>
-                                <Text style={styles.badgeText}>{formatBytes(photo.fileSize)}</Text>
-                            </View>
-                        ) : null}
-                        {photo.mediaType === 'video' && (
-                            <View style={styles.badge}>
-                                <Ionicons name="play" size={10} color="#fff" />
-                                <Text style={styles.badgeText}>{formatDuration(photo.duration)}</Text>
-                            </View>
-                        )}
-                    </View>
-                </View>
-                {photo.filename && (
-                    <Text style={styles.filename} numberOfLines={1}>{photo.filename}</Text>
+        <View style={styles.shadowWrapper}>
+            <Animated.View style={[styles.card, cardStyle]}>
+                {photo.mediaType === 'video' ? (
+                    <VideoView
+                        player={player}
+                        style={styles.image}
+                        contentFit="cover"
+                        nativeControls={false}
+                    />
+                ) : (
+                    <Image
+                        source={{ uri: photo.url }}
+                        style={styles.image}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                        recyclingKey={photo.id}
+                        transition={0}
+                        placeholder={{ blurhash: 'L05#_6~qj[fQj[fQj[fQj[fQj[fQ' }}
+                    />
                 )}
-            </View>
-        </Animated.View>
+                
+                {/* 5. LinearGradient optimized with pointerEvents="none" */}
+                <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.75)']}
+                    locations={[0.4, 0.7, 1]}
+                    style={styles.gradient}
+                    pointerEvents="none"
+                />
+
+                {/* KEEP Stamp */}
+                <Animated.View style={[styles.stampBase, styles.keepStampPos, likeOpacity]} pointerEvents="none">
+                    <Text style={[styles.stamp, styles.keepStamp]}>KEEP</Text>
+                </Animated.View>
+
+                {/* DELETE Stamp */}
+                <Animated.View style={[styles.stampBase, styles.deleteStampPos, nopeOpacity]} pointerEvents="none">
+                    <Text style={[styles.stamp, styles.deleteStamp]}>DELETE</Text>
+                </Animated.View>
+
+                {/* Photo info */}
+                <View style={styles.infoContainer} pointerEvents="none">
+                    <View style={styles.topRow}>
+                        <Text style={styles.date} numberOfLines={1}>
+                            {new Date(photo.creationTime || Date.now()).toLocaleDateString(undefined, {
+                                weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+                            })}
+                        </Text>
+                        <View style={styles.metaBadges}>
+                            {!!photo.fileSize && (
+                                <View style={styles.badge}>
+                                    <Text style={styles.badgeText}>{formatBytes(photo.fileSize)}</Text>
+                                </View>
+                            )}
+                            {!!(photo as any).duration && (
+                                <View style={styles.badge}>
+                                    <Ionicons name="play" size={10} color="#fff" />
+                                    <Text style={styles.badgeText}>{formatDuration((photo as any).duration)}</Text>
+                                </View>
+                            )}
+                        </View>
+                    </View>
+                    {!!photo.filename && (
+                        <Text style={styles.filename} numberOfLines={1}>{photo.filename}</Text>
+                    )}
+                </View>
+            </Animated.View>
+        </View>
     );
-}
+}, (prevProps, nextProps) => {
+    // 2. Custom memo comparison for extreme performance
+    return (
+        prevProps.photo.id === nextProps.photo.id &&
+        prevProps.isTop === nextProps.isTop &&
+        prevProps.index === nextProps.index
+    );
+});
 
 const styles = StyleSheet.create({
+    shadowWrapper: {
+        position: 'absolute',
+        width: '100%',
+        height: '100%',
+        // 3. Move shadows to wrapper View
+        shadowColor: 'rgba(0,0,0,0.12)',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 1,
+        shadowRadius: 24,
+        elevation: 10,
+        backgroundColor: 'transparent',
+    },
     card: {
+        flex: 1,
         borderRadius: 28,
         backgroundColor: '#ffffff',
-        shadowColor: 'rgba(255,107,107,0.15)',
-        shadowOffset: { width: 0, height: 16 },
-        shadowOpacity: 1,
-        shadowRadius: 32,
-        elevation: 12,
+        // 3. Ensure card itself only has borderRadius + overflow
         overflow: 'hidden',
     },
     image: {
         width: '100%',
         height: '100%',
     },
-    videoOverlay: {
-        position: 'absolute',
-        top: 0, left: 0, right: 0, bottom: 0,
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 2,
-    },
-    playButton: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
-        backgroundColor: 'rgba(0,0,0,0.45)',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
     gradient: {
         position: 'absolute',
         left: 0, right: 0, bottom: 0,
         height: '50%',
-        zIndex: 3,
     },
     stampBase: {
         position: 'absolute',
@@ -302,28 +253,16 @@ const styles = StyleSheet.create({
         letterSpacing: 2,
         textTransform: 'uppercase',
     },
-    keepStamp: { color: '#22c55e' },
-    deleteStamp: { color: '#ef4444' },
-    thresholdTrack: {
-        position: 'absolute',
-        bottom: 96,
-        left: 24,
-        right: 24,
-        height: 3,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        borderRadius: 2,
-        overflow: 'hidden',
-        zIndex: 5,
+    keepStamp: {
+        color: '#22c55e',
     },
-    thresholdFill: {
-        height: '100%',
-        borderRadius: 2,
+    deleteStamp: {
+        color: '#ef4444',
     },
     infoContainer: {
         position: 'absolute',
         bottom: 0, left: 0, right: 0,
         padding: 24,
-        zIndex: 4,
     },
     topRow: {
         flexDirection: 'row',
@@ -364,3 +303,5 @@ const styles = StyleSheet.create({
         fontSize: 13,
     },
 });
+
+export default SwipeCard;

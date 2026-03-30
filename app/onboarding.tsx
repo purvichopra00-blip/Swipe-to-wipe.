@@ -16,7 +16,6 @@ import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import { logEvent, TrackEvents } from '../lib/analytics';
-import { ONBOARDING_COMPLETED_KEY } from '../lib/firebase';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -51,7 +50,7 @@ const SLIDES = [
     },
 ];
 
-
+export const ONBOARDING_COMPLETED_KEY = '@onboarding_completed_v4';
 
 // Safe component for animated slides
 const SlideItem = ({ slide, index, scrollX }: { slide: any, index: number, scrollX: SharedValue<number> }) => {
@@ -155,13 +154,6 @@ export default function OnboardingScreen() {
         DUMMY_PHOTOS.forEach(url => Image.prefetch(url));
 
         (async () => {
-            const completed = await AsyncStorage.getItem(ONBOARDING_COMPLETED_KEY);
-            if (completed === 'true') {
-                console.log('Onboarding already complete, skipping...');
-                router.replace('/(auth)/login');
-                return;
-            }
-
             try {
                 let free = 0;
                 let total = 0;

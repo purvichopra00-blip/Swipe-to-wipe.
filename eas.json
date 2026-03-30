@@ -13,7 +13,11 @@
     },
     "production": {
       "distribution": "store",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "RCT_NEW_ARCH_ENABLED": "1",
+        "USE_NEW_ARCHITECTURE": "1"
+      }
     }
   },
   "submit": {

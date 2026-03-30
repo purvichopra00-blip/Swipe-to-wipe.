@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
     StyleSheet, View, Text, TextInput, Pressable,
     Dimensions, KeyboardAvoidingView, Platform,
@@ -11,10 +11,14 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { firebaseAuthREST, AUTH_TOKEN_KEY, AUTH_ID_TOKEN } from '../../lib/firebase';
+import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+import { signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
+import { auth } from '../../lib/firebase';
 import { usePhotos } from '../../contexts/PhotoContext';
 
 const { height: H } = Dimensions.get('window');
+
+export const AUTH_TOKEN_KEY = '@auth_token_v1';
 
 const COUNTRIES = [
     { name: 'United States', dialCode: '+1', flag: '🇺🇸' },
@@ -32,12 +36,18 @@ const COUNTRIES = [
 export default function LoginScreen() {
     const router = useRouter();
     const { setUserToken } = usePhotos();
+    
+    // 1. Properly initialize the ReCaptcha Verifier ref
+    const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+    
     const [authMode, setAuthMode] = useState<'phone' | 'otp'>('phone');
     const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[1]); // Default India
     const [isCountryModalVisible, setIsCountryModalVisible] = useState(false);
     const [phone, setPhone] = useState('');
     const [otp, setOtp] = useState('');
-    const [sessionInfo, setSessionInfo] = useState<string | null>(null);
+    
+    // 2. State to hold the confirmation result needed for verification
+    const [confirmationResult, setConfirmationResult] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
 
     const handleGuestMode = async () => {
@@ -55,64 +65,92 @@ export default function LoginScreen() {
     };
 
     const handleSendOtp = async () => {
+        // Validation
         if (phone.length < 5) {
             Alert.alert("Invalid Number", "Please enter a valid phone number.");
             return;
         }
 
+        if (!recaptchaVerifier.current) {
+            console.error("ReCaptcha Verifier is not ready.");
+            Alert.alert("Error", "Authentication engine is initializing. Please try again in a moment.");
+            return;
+        }
+
         setIsLoading(true);
-        const fullPhone = `${selectedCountry.dialCode}${phone}`;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         try {
-            const data = await firebaseAuthREST('sendVerificationCode', {
-                phoneNumber: fullPhone,
-            });
+            // 3. Format phone number to strict E.164 (e.g. +91XXXXXXXXXX)
+            const cleanPhone = phone.replace(/\D/g, ''); // Remove non-numbers
+            const fullPhone = `${selectedCountry.dialCode}${cleanPhone}`;
+            
+            console.log("Sending OTP to:", fullPhone);
 
-            if (data.error) {
-                if (data.error.message.includes('CAPTCHA')) {
-                    throw new Error("Phone auth requires setup in Firebase Console. For testing, please use Guest Mode.");
-                }
-                throw new Error(data.error.message);
-            }
-
-            setSessionInfo(data.sessionInfo);
+            // 4. Using the requested method signature for Expo compatibility
+            // The third argument is the native recaptcha verifier
+            const result = await signInWithPhoneNumber(auth, fullPhone, recaptchaVerifier.current);
+            
+            setConfirmationResult(result);
             setAuthMode('otp');
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            console.log("OTP sent successfully, session ID available.");
+            
         } catch (error: any) {
-            console.error("OTP send error:", error);
-            Alert.alert("Authentication Failed", error.message);
+            console.error("Firebase Auth Error (Send OTP):", error.code, error.message);
+            
+            // Handle common Firebase errors
+            if (error.code === 'auth/invalid-phone-number') {
+                Alert.alert("Invalid Number", "The phone number provided is not valid.");
+            } else if (error.code === 'auth/too-many-requests') {
+                Alert.alert("Too Many Requests", "Take a break! We've blocked all requests from this device due to unusual activity. Try again later.");
+            } else {
+                Alert.alert("Authentication Error", error.message || "Failed to send verification code.");
+            }
         } finally {
             setIsLoading(false);
         }
     };
 
     const handleVerifyOtp = async () => {
-        if (!sessionInfo) return;
-        if (otp.length < 1) {
-            Alert.alert("Invalid Code", "Please enter the code.");
+        if (!confirmationResult) {
+            Alert.alert("Session Expired", "Please request a new OTP.");
+            setAuthMode('phone');
+            return;
+        }
+        
+        if (otp.length < 6) {
+            Alert.alert("Invalid Code", "Please enter the 6-digit code.");
             return;
         }
 
         setIsLoading(true);
         try {
-            const data = await firebaseAuthREST('signInWithPhoneNumber', {
-                sessionInfo,
-                code: otp
-            });
+            console.log("Verifying OTP...");
+            
+            // 5. Confirm the code using the result from the previous step
+            const userCredential = await confirmationResult.confirm(otp);
+            const user = userCredential.user;
 
-            if (data.error) throw new Error(data.error.message);
+            console.log("Verification successful for UID:", user.uid);
 
+            // 6. Persistence & Session Handover
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            await Promise.all([
-                AsyncStorage.setItem(AUTH_TOKEN_KEY, data.localId),
-                AsyncStorage.setItem(AUTH_ID_TOKEN, data.idToken)
-            ]);
-            setUserToken(data.localId);
+            await AsyncStorage.setItem(AUTH_TOKEN_KEY, user.uid);
+            setUserToken(user.uid);
+            
             router.replace('/permissions');
         } catch (error: any) {
-            console.error("Verification error:", error);
+            console.error("Firebase Verification Error:", error.code, error.message);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            Alert.alert("Error", error.message);
+            
+            if (error.code === 'auth/invalid-verification-code') {
+                Alert.alert("Invalid Code", "The OTP you entered is incorrect. Please check and try again.");
+            } else if (error.code === 'auth/code-expired') {
+                Alert.alert("Code Expired", "This OTP has expired. Please request a new one.");
+            } else {
+                Alert.alert("Verification Error", error.message || "Invalid verification code.");
+            }
         } finally {
             setIsLoading(false);
         }
@@ -137,6 +175,16 @@ export default function LoginScreen() {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View style={s.container}>
                 <LinearGradient colors={['#fff0f5', '#ffffff', '#fef1f6']} style={StyleSheet.absoluteFill} />
+
+                {/* 7. RECAPTCHA MODAL: Crucial for native verification */}
+                <FirebaseRecaptchaVerifierModal
+                    ref={recaptchaVerifier}
+                    firebaseConfig={auth.app.options}
+                    // Styling the modal for better UX
+                    title="Verification"
+                    cancelLabel="Close"
+                    attemptInvisibleVerification={true}
+                />
 
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -168,7 +216,7 @@ export default function LoginScreen() {
                                         placeholder="00000 00000"
                                         placeholderTextColor="#9ca3af"
                                         value={phone}
-                                        onChangeText={setPhone}
+                                        onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, ''))} // Native-friendly numeric input
                                         keyboardType="phone-pad"
                                         autoFocus
                                     />
@@ -201,16 +249,16 @@ export default function LoginScreen() {
                                         placeholder="000000"
                                         placeholderTextColor="#9ca3af"
                                         value={otp}
-                                        onChangeText={setOtp}
+                                        onChangeText={(text) => setOtp(text.replace(/[^0-9]/g, ''))}
                                         keyboardType="number-pad"
                                         maxLength={6}
                                         autoFocus
                                     />
                                 </View>
                                 <Pressable
-                                    style={[s.primaryBtn, otp.length < 1 && s.disabledBtn]}
+                                    style={[s.primaryBtn, otp.length < 6 && s.disabledBtn]}
                                     onPress={handleVerifyOtp}
-                                    disabled={isLoading || otp.length < 1}
+                                    disabled={isLoading || otp.length < 6}
                                 >
                                     <LinearGradient colors={['#ff6b6b', '#ff8e53']} style={s.primaryGrad}>
                                         {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryBtnTxt}>Verify & Enter</Text>}

@@ -16,13 +16,11 @@ import { Easing } from 'react-native-reanimated';
 import Animated, { Layout, FadeIn, FadeOut, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { 
-    firebaseAuthREST, 
-    AUTH_TOKEN_KEY, 
-    AUTH_ID_TOKEN, 
-    ONBOARDING_COMPLETED_KEY, 
-    PERMISSIONS_GRANTED_KEY 
-} from '../../lib/firebase';
+import { AUTH_TOKEN_KEY } from '../(auth)/login';
+import { auth } from '../../lib/firebase';
+import { deleteUser } from 'firebase/auth';
+import { ONBOARDING_COMPLETED_KEY } from '../onboarding';
+import { PERMISSIONS_GRANTED_KEY } from '../permissions';
 import { AppBannerAd, BannerAdSize, AdUnits } from '../../lib/ads';
 
 const { width: W } = Dimensions.get('window');
@@ -100,7 +98,10 @@ export default function BinScreen() {
         return `${(b / 1024 ** 3).toFixed(2)} GB`;
     };
 
-    const daysLeft = (d: number) => Math.max(0, Math.ceil((SEVEN_DAYS - (Date.now() - d)) / 86400000));
+    const daysLeft = (d: number) => {
+        if (!d) return 0;
+        return Math.max(0, Math.ceil((SEVEN_DAYS - (Date.now() - d)) / 86400000));
+    };
 
     const handleDeleteAll = useCallback(() => {
         Alert.alert(
@@ -165,25 +166,22 @@ export default function BinScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            const idToken = await AsyncStorage.getItem(AUTH_ID_TOKEN);
-                            if (idToken) {
-                                await firebaseAuthREST('delete', { idToken });
+                            const user = auth.currentUser;
+                            if (user) {
+                                await deleteUser(user);
                             }
-                            // Clean Slate: Reset all V5 keys
-                            await AsyncStorage.multiRemove([
-                                AUTH_TOKEN_KEY, 
-                                AUTH_ID_TOKEN,
-                                ONBOARDING_COMPLETED_KEY, 
-                                PERMISSIONS_GRANTED_KEY,
-                                '@total_cleared_bytes_v2',
-                                '@total_deleted_photos_v2',
-                                '@bin_photos_v2'
-                            ]);
-                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                            router.replace('/login');
+                             // Deep Wipe: Clear all local data and preferences
+                             await deepReset();
+                             
+                             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                             router.replace('/login');
                         } catch (err: any) {
                             console.error('Delete account error', err);
-                            Alert.alert('Error', 'Failed to delete account. Please try again.');
+                            if (err.code === 'auth/requires-recent-login') {
+                                Alert.alert('Security Check', 'For security reasons, please log out and log back in before deleting your account.');
+                            } else {
+                                Alert.alert('Error', 'Failed to delete account. Please try again.');
+                            }
                         }
                     }
                 }
@@ -206,7 +204,11 @@ export default function BinScreen() {
                     onLongPress={() => handleDeleteOne(item)}
                     onPress={() => handleRestore(item)}
                 >
-                    <Image source={item.url} style={styles.thumb} contentFit="cover" />
+                    <Image 
+                        source={item.url || 'https://via.placeholder.com/150'} 
+                        style={styles.thumb} 
+                        contentFit="cover" 
+                    />
                     {/* Gradient overlay */}
                     <LinearGradient colors={['transparent', 'rgba(0,0,0,0.75)']} style={styles.thumbGrad} />
                     {/* Days badge */}
@@ -280,6 +282,21 @@ export default function BinScreen() {
                 </View>
             </View>
 
+            {/* Storage freed pill */}
+            {binPhotos.length > 0 ? (
+                <View style={styles.storagePill}>
+                    <Ionicons name="sparkles-outline" size={14} color="#a78bfa" />
+                    <Text style={styles.storagePillTxt}>
+                        Free up <Text style={{ color: '#a78bfa', fontWeight: '800' }}>{fmt(binStorageBytes)}</Text> by deleting all
+                    </Text>
+                </View>
+            ) : null}
+
+            {/* Hint */}
+            {binPhotos.length > 0 ? (
+                <Text style={styles.hint}>Tap to restore · Long press to delete permanently</Text>
+            ) : null}
+
             {/* Grid */}
             <FlatList
                 data={binPhotos}
@@ -288,7 +305,7 @@ export default function BinScreen() {
                 numColumns={3}
                 contentContainerStyle={[
                     styles.grid,
-                    { paddingBottom: Math.max(insets.bottom, 24) + 160 },
+                    { paddingBottom: Math.max(insets.bottom, 20) + 320 }, 
                     binPhotos.length === 0 && { flex: 1, justifyContent: 'center', paddingBottom: 0 },
                 ]}
                 ListEmptyComponent={<EmptyState />}
@@ -298,7 +315,7 @@ export default function BinScreen() {
 
             {/* Footer Buttons */}
             {binPhotos.length > 0 && (
-                <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+                <View style={[styles.footer, { bottom: Math.max(insets.bottom, 20) + 144 }]}>
                     <ScalePress
                         style={styles.recoverBtn}
                         onPress={async () => {
@@ -326,6 +343,65 @@ export default function BinScreen() {
                     </ScalePress>
                 </View>
             )}
+
+            {/* Permanent Deletion Celebration Popup */}
+            <Modal visible={deletedStats.show} transparent animationType="none" onRequestClose={closeCelebration}>
+                <Pressable style={styles.celebOverlay} onPress={closeCelebration}>
+                    <RNAnimated.View
+                        style={[styles.celebCard, {
+                            opacity: celebOpacity,
+                            transform: [{ scale: celebScale }],
+                        }]}
+                    >
+                        <LinearGradient colors={['rgba(255,107,107,0.08)', 'rgba(255,255,255,0)']} style={StyleSheet.absoluteFill} />
+                        {/* Shimmer line top */}
+                        <View style={styles.celebShimmer} />
+
+                        {deletedStats.show && (
+                            <ConfettiCannon
+                                count={60}
+                                origin={{ x: W / 2, y: -20 }}
+                                fallSpeed={2500}
+                                fadeOut
+                                colors={['#ef4444', '#dc2626', '#f87171', '#fcd34d']}
+                            />
+                        )}
+
+                        <View style={styles.celebIconWrap}>
+                            <Ionicons name="trash-bin" size={36} color="#ef4444" />
+                            {/* Orbiting dot */}
+                            <RNAnimated.View style={[styles.orbitContainer, {
+                                transform: [{
+                                    rotate: orbitSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
+                                }]
+                            }]}>
+                                <View style={styles.orbitDot} />
+                            </RNAnimated.View>
+                        </View>
+
+                        <Text style={styles.celebTitle}>
+                            {deletedStats.count} {deletedStats.count === 1 ? 'Item' : 'Items'} Permanently Deleted
+                        </Text>
+
+                        {deletedStats.bytes > 0 ? (
+                            <View style={styles.celebStorage}>
+                                <Text style={styles.celebStorageVal}>{fmt(deletedStats.bytes).split(' ')[0]} <Text style={styles.celebStorageUnit}>{fmt(deletedStats.bytes).split(' ')[1]}</Text></Text>
+                                <Text style={styles.celebStorageLbl}>Storage Recovered</Text>
+                            </View>
+                        ) : (
+                            <View style={styles.celebStorage}>
+                                <Text style={styles.celebStorageLbl}>No significant storage recovered</Text>
+                            </View>
+                        )}
+
+                        <Pressable style={({ pressed }) => [styles.celebPrimaryBtn, pressed && { transform: [{ scale: 0.96 }] }]} onPress={closeCelebration}>
+                            <LinearGradient colors={['#ef4444', '#dc2626']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.celebPrimaryGrad}>
+                                <Text style={styles.celebPrimaryTxt}>Done</Text>
+                            </LinearGradient>
+                        </Pressable>
+                    </RNAnimated.View>
+                </Pressable>
+            </Modal>
 
             {/* Settings Modal */}
             <Modal
@@ -356,6 +432,7 @@ export default function BinScreen() {
                                 onPress={() => {
                                     setIsSettingsVisible(false);
                                     if (isGuest) {
+                                        // "Log In" for Guest = Sign Out + Go to Login
                                         setUserToken(null);
                                         AsyncStorage.removeItem(AUTH_TOKEN_KEY);
                                         router.replace('/login');
@@ -375,9 +452,11 @@ export default function BinScreen() {
                                 style={styles.settingsOption}
                                 onPress={() => {
                                     setIsSettingsVisible(false);
+                                    // Use existing handleDeleteAll to trigger the reset
+                                    // But actually we want a FULL app reset here
                                     Alert.alert(
                                         'Reset App?',
-                                        'This will clear all your swipe history and start fresh.',
+                                        'This will clear all your swipe history and start fresh. Your photos on device will NOT be deleted.',
                                         [
                                             { text: 'Cancel', style: 'cancel' },
                                             { 
@@ -386,6 +465,7 @@ export default function BinScreen() {
                                                 onPress: async () => {
                                                     await deepReset();
                                                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                                                    setIsSettingsVisible(false);
                                                 }
                                             }
                                         ]
@@ -416,16 +496,17 @@ export default function BinScreen() {
                             </ScalePress>
                         </View>
                         
-                        <Text style={styles.versionTxt}>Version 1.0.0 (Production Stable V5)</Text>
+                        <Text style={styles.versionTxt}>Version 1.0.0 (Production Ready)</Text>
                     </Animated.View>
                 </Pressable>
             </Modal>
 
-            {/* Banner Ad */}
-            <View style={{ position: 'absolute', bottom: insets.bottom + 8, left: 0, right: 0, alignItems: 'center' }}>
+            {/* Bottom Banner Ad */}
+            <View style={{ position: 'absolute', bottom: Math.max(insets.bottom, 20) + 72, left: 0, right: 0, alignItems: 'center' }}>
                 <AppBannerAd
                     unitId={AdUnits.BANNER}
                     size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                    requestOptions={{ requestNonPersonalizedAdsOnly: true }}
                 />
             </View>
         </View>
@@ -434,48 +515,221 @@ export default function BinScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#fff0f5' },
-    header: { paddingHorizontal: 20, paddingBottom: 8 },
-    title: { fontSize: 24, fontWeight: '900', color: '#1f2937' },
-    subtitle: { fontSize: 13, color: '#9ca3af', fontWeight: '600' },
+
+    header: {
+        paddingTop: 64, // Fallback
+        paddingHorizontal: 20, paddingBottom: 8,
+        flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
+    },
+    title: { 
+        fontSize: 19, 
+        fontWeight: '900', 
+        color: '#1f2937', 
+        letterSpacing: -0.3 
+    },
+
+    subtitle: {
+        fontSize: 13,
+        color: '#9ca3af',
+        fontWeight: '600',
+        marginTop: 0,
+    },
     headerIconBtn: {
-        width: 40, height: 40, borderRadius: 12, backgroundColor: '#fff',
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: 'rgba(0,0,0,0.05)', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 4, elevation: 2,
-        borderWidth: 1, borderColor: '#f3f4f6',
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: 'rgba(0,0,0,0.05)',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 1,
+        shadowRadius: 4,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#f3f4f6',
     },
     statBadge: {
-        flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff',
-        paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, gap: 5,
-        borderWidth: 1, borderColor: 'rgba(239,68,68,0.1)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        paddingHorizontal: 8,
+        paddingVertical: 5,
+        borderRadius: 8,
+        gap: 5,
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.1)',
+        shadowColor: 'rgba(0,0,0,0.02)',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 1,
+        shadowRadius: 2,
     },
-    statBadgeTxt: { fontSize: 12, fontWeight: '600', color: '#1f2937' },
-    grid: { paddingHorizontal: 16, paddingTop: 15 },
-    row: { gap: 3, marginBottom: 3 },
-    gridItemWrap: { width: ITEM, height: ITEM },
-    gridItem: { width: '100%', height: '100%', borderRadius: 12, overflow: 'hidden' },
-    thumb: { width: '100%', height: '100%' },
-    thumbGrad: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '40%' },
-    daysBadge: { position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10 },
-    daysBadgeRed: { backgroundColor: '#ef4444' },
-    daysTxt: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
-    emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
-    emptyIcon: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-    emptyTitle: { fontSize: 22, fontWeight: '800', color: '#333', marginBottom: 10 },
-    emptySub: { fontSize: 15, color: '#999', textAlign: 'center', lineHeight: 22 },
-    footer: { position: 'absolute', bottom: 106, left: 20, right: 20, flexDirection: 'row', gap: 12 },
-    recoverBtn: { flex: 1, height: 52, backgroundColor: '#fff', borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: '#fef2f2' },
-    recoverTxt: { color: '#f43f5e', fontSize: 15, fontWeight: '700' },
-    deleteBtn: { flex: 1, height: 52, backgroundColor: '#ff4757', borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-    deleteTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
-    settingsOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-    settingsContent: { width: '100%', backgroundColor: '#fff', borderRadius: 24, padding: 24 },
-    settingsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-    settingsTitle: { fontSize: 24, fontWeight: '800', color: '#1f2937' },
+    statBadgeTxt: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    totalStatsLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    totalStatsIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(99,102,241,0.08)', alignItems: 'center', justifyContent: 'center' },
+    totalStatsLbl: { fontFamily: 'DMSans_500Medium', color: '#6b7280', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
+    totalStatsVal: { fontFamily: 'DMSans_700Bold', color: '#6366f1', fontSize: 22, marginTop: -2 },
+    totalStatsRight: { alignItems: 'flex-end' },
+    totalStatsHint: { fontFamily: 'DMSans_700Bold', color: '#cbd5e1', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 },
+
+    storagePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: 20,
+        marginTop: 12,
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderRadius: 20,
+        shadowColor: 'rgba(0,0,0,0.04)',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 1,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+    storagePillTxt: { color: '#666', fontSize: 15, fontWeight: '600' },
+
+    settingsOverlay: {
+        flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'center', alignItems: 'center',
+        padding: 24,
+    },
+    settingsContent: {
+        width: '100%', backgroundColor: '#fff',
+        borderRadius: 24, padding: 24,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 20 },
+        shadowOpacity: 0.15, shadowRadius: 30, elevation: 20,
+    },
+    settingsHeader: {
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: 20,
+    },
+    settingsTitle: { fontFamily: 'Syne_700Bold', fontSize: 24, color: '#1f2937' },
     settingsClose: { padding: 4 },
     settingsList: { gap: 4 },
-    settingsOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-    settingsIconWrap: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
-    settingsOptionTxt: { flex: 1, fontSize: 16, fontWeight: '700', color: '#4b5563' },
-    settingsDivider: { height: 1, backgroundColor: '#f3f4f6', marginVertical: 12 },
-    versionTxt: { textAlign: 'center', marginTop: 20, fontSize: 12, color: '#9ca3af' },
+    settingsOption: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingVertical: 14, paddingHorizontal: 4,
+    },
+    settingsIconWrap: {
+        width: 44, height: 44, borderRadius: 14,
+        alignItems: 'center', justifyContent: 'center',
+        marginRight: 14,
+    },
+    settingsOptionTxt: {
+        flex: 1, fontFamily: 'DMSans_700Bold',
+        fontSize: 16, color: '#4b5563',
+    },
+    settingsDivider: {
+        height: 1, backgroundColor: '#f3f4f6',
+        marginVertical: 12, marginHorizontal: 4,
+    },
+    versionTxt: {
+        textAlign: 'center', marginTop: 20,
+        fontFamily: 'DMSans_500Medium', fontSize: 12, color: '#9ca3af',
+    },
+    hint: {
+        color: '#9ca3af', fontSize: 13,
+        textAlign: 'center', marginTop: 15, marginBottom: 4,
+        fontWeight: '500',
+    },
+
+    grid: { paddingHorizontal: 16, paddingTop: 15, paddingBottom: 120 },
+    row: { gap: 3, marginBottom: 3 },
+    gridItemWrap: { width: ITEM, height: ITEM, marginBottom: 3 },
+    gridItem: {
+        width: '100%', height: '100%',
+        borderRadius: 12, overflow: 'hidden',
+    },
+    thumb: { width: '100%', height: '100%' },
+    thumbGrad: { position: 'absolute', left: 0, right: 0, bottom: 0, height: ITEM * 0.45 },
+    daysBadge: {
+        position: 'absolute', bottom: 8, right: 8,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10,
+    },
+    daysBadgeRed: { backgroundColor: '#ef4444' },
+    daysTxt: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
+
+    emptyWrap: { alignItems: 'center', paddingHorizontal: 40, marginTop: 40 },
+    emptyIcon: {
+        width: 100, height: 100, borderRadius: 50,
+        backgroundColor: '#ffffff',
+        shadowColor: 'rgba(0,0,0,0.05)', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16, elevation: 4,
+        alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+    },
+    emptyTitle: { fontSize: 22, fontWeight: '800', color: '#333', marginBottom: 10 },
+    emptySub: { fontSize: 15, color: '#999', textAlign: 'center', lineHeight: 22 },
+    footer: {
+        position: 'absolute', 
+        bottom: 154, 
+        left: 20, 
+        right: 20,
+        flexDirection: 'row', 
+        gap: 12,
+        backgroundColor: 'transparent',
+    },
+    recoverBtn: {
+        flex: 1, 
+        height: 52,
+        backgroundColor: '#fff',
+        borderRadius: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        borderWidth: 1.5,
+        borderColor: '#fef2f2',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+    recoverTxt: { color: '#f43f5e', fontSize: 15, fontWeight: '700' },
+    deleteBtn: { 
+        flex: 1, 
+        height: 52,
+        backgroundColor: '#ff4757', // More vibrant red to look active
+        borderRadius: 20,
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        gap: 8,
+        shadowColor: '#ef4444', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 16, elevation: 8 
+    },
+    deleteTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+    // Celebration Popup
+    celebOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+    celebCard: {
+        width: '100%', backgroundColor: '#ffffff', borderRadius: 32, paddingHorizontal: 28, paddingTop: 36, paddingBottom: 24,
+        alignItems: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(239,68,68,0.1)',
+        shadowColor: 'rgba(239,68,68,0.2)', shadowOffset: { width: 0, height: 16 }, shadowOpacity: 1, shadowRadius: 32, elevation: 12,
+    },
+    celebShimmer: {
+        position: 'absolute', top: 0, left: 24, right: 24, height: 1,
+        backgroundColor: 'rgba(239,68,68,0.2)',
+    },
+    celebIconWrap: {
+        width: 80, height: 80, borderRadius: 40,
+        backgroundColor: 'rgba(239,68,68,0.1)',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+    },
+    orbitContainer: { position: 'absolute', width: 96, height: 96, alignItems: 'center', justifyContent: 'flex-start' },
+    orbitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444', shadowColor: '#ef4444', shadowOpacity: 0.6, shadowRadius: 6 },
+    celebTitle: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 22, marginBottom: 20, textAlign: 'center', lineHeight: 28 },
+
+    celebStorage: { alignItems: 'center', marginBottom: 32 },
+    celebStorageVal: { fontFamily: 'DMSans_700Bold', color: '#ef4444', fontSize: 44, letterSpacing: -1.5, lineHeight: 54 },
+    celebStorageUnit: { fontSize: 22, fontFamily: 'DMSans_700Bold' },
+    celebStorageLbl: { fontFamily: 'DMSans_700Bold', color: '#9ca3af', fontSize: 13, letterSpacing: 0.5, textTransform: 'uppercase', marginTop: 0 },
+
+    celebPrimaryBtn: { width: '100%', borderRadius: 100, overflow: 'hidden', marginBottom: 12, shadowColor: '#ef4444', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 8 },
+    celebPrimaryGrad: { paddingVertical: 18, alignItems: 'center', position: 'relative' },
+    celebPrimaryTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
 });
