@@ -67,7 +67,7 @@ export default function TabLayout() {
                 // Filter out screens with href: null to match our custom UI state
                 const visibleRoutes = state.routes.filter(route => {
                     const { options } = descriptors[route.key];
-                    return options.href !== null;
+                    return (options as any).href !== null;
                 });
 
                 return (

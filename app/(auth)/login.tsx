@@ -64,6 +64,8 @@ export default function LoginScreen() {
         }
     };
 
+
+
     const handleSendOtp = async () => {
         // Validation
         if (phone.length < 5) {
@@ -267,7 +269,7 @@ export default function LoginScreen() {
                                 <Pressable onPress={() => setAuthMode('phone')} style={s.backBtn}>
                                     <Text style={s.backBtnTxt}>Edit Number</Text>
                                 </Pressable>
-                            </View>
+                              </View>
                         )}
                     </Animated.View>
 

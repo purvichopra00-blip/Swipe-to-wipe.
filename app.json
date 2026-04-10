@@ -3,7 +3,7 @@
     "name": "Swipe to Wipe",
     "slug": "photo-swipe",
     "scheme": "photo-swipe",
-    "version": "1.0.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.purvichopra.swipetowipe",
-      "buildNumber": "17",
+      "buildNumber": "24",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
@@ -62,7 +62,7 @@
         {
           "ios": {
             "newArchEnabled": true,
-            "useModularHeaders": true
+            "useFrameworks": "static"
           },
           "android": {
             "newArchEnabled": true

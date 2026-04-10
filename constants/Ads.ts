@@ -1,14 +1,29 @@
+import { Platform } from 'react-native';
+
 /**
  * AdMob Configuration
- * Replace these test IDs with your production AdMob IDs when publishing the app.
+ * AdMob explicitly requires different ad units for iOS and Android.
  */
-export const AD_CONFIG = {
-    // PRODUCTION BANNER ID (Replace with your actual AdMob Banner ID)
-    BANNER_UNIT_ID: __DEV__ ? 'ca-app-pub-3940256099942544/6300978111' : 'ca-app-pub-4536210339227120/2940221892',
 
-    // PRODUCTION INTERSTITIAL ID (Replace with your actual AdMob Interstitial ID)
-    INTERSTITIAL_UNIT_ID: __DEV__ ? 'ca-app-pub-3940256099942544/1033173712' : 'ca-app-pub-4536210339227120/7749220084',
+// Official Google Test IDs
+const bannerTestId = Platform.OS === 'ios' ? 'ca-app-pub-3940256099942544/2934735716' : 'ca-app-pub-3940256099942544/6300978111';
+const interstitialTestId = Platform.OS === 'ios' ? 'ca-app-pub-3940256099942544/4411468910' : 'ca-app-pub-3940256099942544/1033173712';
+
+export const AD_CONFIG = {
+    // PRODUCTION BANNER IDs
+    BANNER_UNIT_ID: __DEV__ ? bannerTestId : (
+        Platform.OS === 'ios' 
+            ? 'ca-app-pub-4536210339227120/7941351227' 
+            : 'ca-app-pub-4536210339227120/7941351227'
+    ),
+
+    // PRODUCTION INTERSTITIAL IDs
+    INTERSTITIAL_UNIT_ID: __DEV__ ? interstitialTestId : (
+        Platform.OS === 'ios' 
+            ? 'ca-app-pub-4536210339227120/7749220084' 
+            : 'ca-app-pub-4536210339227120/7749220084'
+    ),
 
     // How many swipes before showing an interstitial
-    SWIPES_PER_INTERSTITIAL: 15,
+    SWIPES_PER_INTERSTITIAL: 50,
 };

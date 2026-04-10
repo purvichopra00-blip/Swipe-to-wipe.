@@ -13,7 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { BinPhoto } from '../../contexts/PhotoContext';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { Easing } from 'react-native-reanimated';
-import Animated, { Layout, FadeIn, FadeOut, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
+import Animated, { Layout, FadeIn, FadeOut, FadeInDown, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AUTH_TOKEN_KEY } from '../(auth)/login';
@@ -59,6 +59,25 @@ export default function BinScreen() {
     } = usePhotos();
     const [isDeleting, setIsDeleting] = useState(false);
     const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+
+    // Initial Bin Tutorial 
+    const BIN_TUTORIAL_KEY = '@bin_tutorial_v1';
+    const [showBinTutorial, setShowBinTutorial] = useState(false);
+
+    React.useEffect(() => {
+        if (binPhotos.length > 0) {
+            AsyncStorage.getItem(BIN_TUTORIAL_KEY).then(res => {
+                if (!res) {
+                    setShowBinTutorial(true);
+                }
+            });
+        }
+    }, [binPhotos.length]);
+
+    const completeBinTutorial = () => {
+        setShowBinTutorial(false);
+        AsyncStorage.setItem(BIN_TUTORIAL_KEY, 'done');
+    };
 
     // Celebration state
     const [deletedStats, setDeletedStats] = useState({ count: 0, bytes: 0, show: false });
@@ -239,7 +258,10 @@ export default function BinScreen() {
             <View style={[styles.header, { paddingTop: Math.max(insets.top, 20), flexDirection: 'column', alignItems: 'flex-start', gap: 10 }]}>
                 {/* Row 1: Title and Badges */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' }}>
-                    <Text style={styles.title}>Review Bin</Text>
+                    {/* Failsafe Hidden Tutorial Button on the Title string */}
+                    <ScalePress onPress={() => setShowBinTutorial(true)}>
+                        <Text style={styles.title}>Review Bin</Text>
+                    </ScalePress>
                     <View style={styles.statBadge}>
                         <Ionicons name="trash" size={12} color="#f43f5e" />
                         <Text style={styles.statBadgeTxt}>
@@ -501,6 +523,34 @@ export default function BinScreen() {
                 </Pressable>
             </Modal>
 
+            {/* Bin Tutorial Overlay */}
+            {showBinTutorial && (
+                <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999, justifyContent: 'center' }]} pointerEvents="box-none">
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.8)' }]} />
+                    
+                    <Animated.View entering={FadeInDown.duration(600).delay(300).springify()} style={styles.tutBinOverlay}>
+                        <View style={[styles.tutIconWrap, { backgroundColor: 'rgba(59,130,246,0.15)' }]}>
+                            <Ionicons name="information-circle" size={44} color="#3b82f6" />
+                        </View>
+                        <Text style={styles.tutBinTitle}>Last Chance!</Text>
+                        <Text style={styles.tutBinDesc}>
+                            Tap any photo here to <Text style={{fontWeight: '800', color: '#fff'}}>Restore</Text> it back to your gallery.
+                        </Text>
+                        <Text style={styles.tutBinDesc2}>
+                            Or, hit <Text style={{fontWeight: '800', color: '#ef4444'}}>Delete All</Text> at the bottom to permanently free up space.
+                        </Text>
+                        
+                        <ScalePress style={styles.tutBinBtn} onPress={completeBinTutorial}>
+                            <Text style={styles.tutBinBtnText}>Got it!</Text>
+                        </ScalePress>
+                    </Animated.View>
+
+                    <Animated.View entering={FadeInDown.duration(1000).delay(800).springify()} style={styles.tutArrowContainer}>
+                        <RNAnimated.Text style={styles.tutArrow}>↓</RNAnimated.Text>
+                    </Animated.View>
+                </View>
+            )}
+
             {/* Bottom Banner Ad */}
             <View style={{ position: 'absolute', bottom: Math.max(insets.bottom, 20) + 72, left: 0, right: 0, alignItems: 'center' }}>
                 <AppBannerAd
@@ -732,4 +782,28 @@ const styles = StyleSheet.create({
     celebPrimaryBtn: { width: '100%', borderRadius: 100, overflow: 'hidden', marginBottom: 12, shadowColor: '#ef4444', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 8 },
     celebPrimaryGrad: { paddingVertical: 18, alignItems: 'center', position: 'relative' },
     celebPrimaryTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
+
+    // Bin Tutorial Styles
+    tutBinOverlay: {
+        marginHorizontal: 32,
+        backgroundColor: '#1f2937',
+        borderRadius: 32,
+        padding: 32,
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 20 },
+        shadowOpacity: 0.4,
+        shadowRadius: 30,
+        elevation: 24,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)'
+    },
+    tutIconWrap: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+    tutBinTitle: { fontSize: 28, fontWeight: '900', color: '#fff', marginBottom: 12, textAlign: 'center' },
+    tutBinDesc: { fontSize: 16, color: '#d1d5db', textAlign: 'center', lineHeight: 24, marginBottom: 8 },
+    tutBinDesc2: { fontSize: 15, color: '#9ca3af', textAlign: 'center', lineHeight: 22, marginBottom: 32 },
+    tutBinBtn: { width: '100%', backgroundColor: '#fff', paddingVertical: 18, borderRadius: 20, alignItems: 'center' },
+    tutBinBtnText: { fontSize: 17, fontWeight: '800', color: '#1f2937' },
+    tutArrowContainer: { position: 'absolute', bottom: 180, right: 100, alignItems: 'center' },
+    tutArrow: { fontSize: 64, color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: {width: 0, height: 4}, textShadowRadius: 8 },
 });

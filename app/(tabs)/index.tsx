@@ -132,6 +132,7 @@ export default function SwipeScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const translateX = useSharedValue(0);
+    const translateY = useSharedValue(0);
     const soundRef = useRef<Audio.Sound | null>(null);
     const [showSort, setShowSort] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
@@ -142,12 +143,12 @@ export default function SwipeScreen() {
     const activeCatRef = useRef<string>('Random');
 
     const [showCelebration, setShowCelebration] = useState(false);
-    const [lastCelebrationCount, setLastCelebrationCount] = useState(0); 
+    const [lastCelebrationCount, setLastCelebrationCount] = useState(0);
     const [lastSwipedId, setLastSwipedId] = useState<string | null>(null);
     const [adTriggerCounter, setAdTriggerCounter] = useState(0);
     const [interstitial, setInterstitial] = useState<any>(null);
     const [adLoaded, setAdLoaded] = useState(false);
-    
+
     const [showFullPreview, setShowFullPreview] = useState(false);
 
     useEffect(() => {
@@ -157,6 +158,8 @@ export default function SwipeScreen() {
             const unsubscribeError = ad.addAdEventListener(AdEventType.ERROR, (err: any) => {
                 console.warn('Interstitial Load Error:', err);
                 setAdLoaded(false);
+                // In production, AdMob might return 0 fill initially. Ensure we retry.
+                setTimeout(() => { ad.load(); }, 15000);
             });
             const unsubscribeClosed = ad.addAdEventListener(AdEventType.CLOSED, () => {
                 setAdLoaded(false);
@@ -177,6 +180,10 @@ export default function SwipeScreen() {
         if (adLoaded && interstitial) {
             interstitial.show();
         } else {
+            // If ad wasn't loaded by the time we hit the trigger, try loading it again.
+            if (interstitial && !adLoaded) {
+                interstitial.load();
+            }
             setAdTriggerCounter(0); // Reset if ad failed
         }
     }, [adLoaded, interstitial]);
@@ -303,7 +310,7 @@ export default function SwipeScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setShowInfo(true);
         setIsCalculatingInfo(true);
-        
+
         // Use the metadata ALREADY present in the photo object 
         // to avoid buggy and crashing MediaLibrary calls.
         setDetailedInfo({
@@ -339,37 +346,50 @@ export default function SwipeScreen() {
         await startSwipingSession(activeCatRef.current);
     }, [setSortMode, startSwipingSession]);
 
-    // Swipe Tutorial Logic
-    const TUTORIAL_SEEN_KEY = '@swipe_tutorial_seen_v5';
-    const [showTutorial, setShowTutorial] = useState(false);
+    // Swipe Tutorial Logic (Progressive Disclosure)
+    const TUTORIAL_SEEN_KEY = '@swipe_tutorial_v10';
+    const [tutorialStepState, _setTutorialStep] = useState<0 | 1 | 2 | 3>(0);
+    const tutorialStepRef = useRef<0 | 1 | 2 | 3>(0);
+    const isTutorialActive = useSharedValue(false);
     const handOpacity = useSharedValue(0);
+    const hasCheckedTutorial = useRef(false);
 
-    const dismissTutorial = useCallback(async () => {
-        if (showTutorial) {
-            cancelAnimation(translateX);
-            setShowTutorial(false);
-            await AsyncStorage.setItem(TUTORIAL_SEEN_KEY, 'true');
+    const setTutorialStep = useCallback((step: 0 | 1 | 2 | 3) => {
+        tutorialStepRef.current = step;
+        isTutorialActive.value = (step === 1);
+        _setTutorialStep(step);
+    }, [isTutorialActive]);
+
+    // Completely bulletproof trigger: wait until intro is DEAD, then fire after 1 second.
+    useEffect(() => {
+        if (!showIntro && currentPhoto && !isLoadingSession && !hasCheckedTutorial.current) {
+            hasCheckedTutorial.current = true;
+            AsyncStorage.getItem(TUTORIAL_SEEN_KEY).then(step => {
+                if (!step) {
+                    setTimeout(() => setTutorialStep(1), 500); // give it a beat to render before spawning ghosts
+                } else if (step === '1' || step === '2') {
+                    setTutorialStep(2); // Fast forward to waiting for a delete swipe
+                } else if (step === '3') {
+                    setTutorialStep(3); // In case they closed during the modal
+                }
+            });
         }
-    }, [showTutorial]);
+    }, [showIntro, currentPhoto, isLoadingSession]);
 
-    const hasSeenTutorialThisSession = useRef(false);
+    const completeTutorial = useCallback(() => {
+        setTutorialStep(0);
+        AsyncStorage.setItem(TUTORIAL_SEEN_KEY, 'done');
+    }, []);
 
     useEffect(() => {
-        if (currentPhoto && !hasSeenTutorialThisSession.current) {
-            setShowTutorial(true);
-            hasSeenTutorialThisSession.current = true;
-        }
-    }, [currentPhoto]);
-
-    useEffect(() => {
-        if (showTutorial) {
+        if (tutorialStepState === 1) {
             handOpacity.value = withTiming(1, { duration: 400 });
             translateX.value = withRepeat(
                 withSequence(
                     withTiming(0, { duration: 600 }),
-                    withTiming(SWIPE_THRESHOLD * 1.5, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
-                    withTiming(0, { duration: 600, easing: Easing.inOut(Easing.ease) }),
                     withTiming(-SWIPE_THRESHOLD * 1.5, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
+                    withTiming(0, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+                    withTiming(SWIPE_THRESHOLD * 1.5, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
                     withTiming(0, { duration: 800, easing: Easing.inOut(Easing.ease) })
                 ),
                 -1 // loop infinitely
@@ -377,7 +397,7 @@ export default function SwipeScreen() {
         } else {
             handOpacity.value = withTiming(0, { duration: 300 });
         }
-    }, [showTutorial]);
+    }, [tutorialStepState]);
 
     const handStyle = useAnimatedStyle(() => {
         return {
@@ -396,10 +416,15 @@ export default function SwipeScreen() {
     }));
 
     const handleSwipeRight = useCallback(() => {
-        dismissTutorial();
+        if (tutorialStepRef.current === 1) {
+            setTutorialStep(2); // Ghost hands disappear, wait quietly for left swipe
+            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '2');
+        }
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         cancelAnimation(translateX);
+        cancelAnimation(translateY);
         translateX.value = 0; // Reset FIRST to prevent new card from appearing off-screen
+        translateY.value = 0;
         swipeRight();
         setAdTriggerCounter(prev => {
             const next = prev + 1;
@@ -408,14 +433,19 @@ export default function SwipeScreen() {
             }
             return next;
         });
-    }, [dismissTutorial, swipeRight, translateX, showAd]);
+    }, [swipeRight, translateX, showAd]);
 
     const handleSwipeLeft = useCallback(() => {
-        dismissTutorial();
+        if (tutorialStepRef.current === 1 || tutorialStepRef.current === 2) {
+            setTutorialStep(3); // Trigger Safe in Bin overlay
+            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '3');
+        }
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         playDeleteSound();
         cancelAnimation(translateX);
+        cancelAnimation(translateY);
         translateX.value = 0; // Reset FIRST
+        translateY.value = 0;
         swipeLeft();
         setAdTriggerCounter(prev => {
             const next = prev + 1;
@@ -424,15 +454,26 @@ export default function SwipeScreen() {
             }
             return next;
         });
-    }, [dismissTutorial, swipeLeft, translateX, playDeleteSound, showAd]);
+    }, [swipeLeft, translateX, playDeleteSound, showAd]);
 
     const panGesture = Gesture.Pan()
         .activeOffsetX([-10, 10]) // Prevent jitter on vertical scroll
         .onStart((e) => {
-            if (showTutorial) runOnJS(dismissTutorial)();
+            if (isTutorialActive.value) {
+                cancelAnimation(translateX);
+                handOpacity.value = withTiming(0);
+            }
         })
         .onUpdate((e) => {
-            translateX.value = e.translationX;
+            // Logarithmic resistance if pulled past threshold
+            let newX = e.translationX;
+            if (newX > SWIPE_THRESHOLD) {
+                newX = SWIPE_THRESHOLD + (newX - SWIPE_THRESHOLD) * 0.6;
+            } else if (newX < -SWIPE_THRESHOLD) {
+                newX = -SWIPE_THRESHOLD + (newX + SWIPE_THRESHOLD) * 0.6;
+            }
+            translateX.value = newX;
+            translateY.value = e.translationY;
             // Immediate haptic feedback on threshold cross
             if (
                 (e.translationX > SWIPE_THRESHOLD && e.translationX - e.velocityX * 0.016 <= SWIPE_THRESHOLD) ||
@@ -444,25 +485,20 @@ export default function SwipeScreen() {
             const finalX = e.translationX + velocityEffect;
 
             if (finalX > SWIPE_THRESHOLD) {
-                translateX.value = withSpring(W * 1.5, {
-                    damping: 20,
-                    stiffness: 150,
-                    mass: 0.8,
-                    velocity: e.velocityX
-                }, () => runOnJS(handleSwipeRight)());
+                const duration = Math.min(250, Math.max(150, 40000 / Math.abs(e.velocityX || 100)));
+                translateX.value = withTiming(W * 1.5, { duration, easing: Easing.out(Easing.cubic) }, () => runOnJS(handleSwipeRight)());
+                translateY.value = withTiming(e.translationY + e.velocityY * 0.3, { duration, easing: Easing.out(Easing.cubic) });
             } else if (finalX < -SWIPE_THRESHOLD) {
-                translateX.value = withSpring(-W * 1.5, {
-                    damping: 20,
-                    stiffness: 150,
-                    mass: 0.8,
-                    velocity: e.velocityX
-                }, () => runOnJS(handleSwipeLeft)());
+                const duration = Math.min(250, Math.max(150, 40000 / Math.abs(e.velocityX || 100)));
+                translateX.value = withTiming(-W * 1.5, { duration, easing: Easing.out(Easing.cubic) }, () => runOnJS(handleSwipeLeft)());
+                translateY.value = withTiming(e.translationY + e.velocityY * 0.3, { duration, easing: Easing.out(Easing.cubic) });
             } else {
+                // Snap back with a nice bouncy spring
                 translateX.value = withSpring(0, {
-                    damping: 20,
-                    stiffness: 150,
-                    mass: 0.8,
-                    velocity: e.velocityX
+                    damping: 18, stiffness: 180, mass: 0.8, velocity: e.velocityX
+                });
+                translateY.value = withSpring(0, {
+                    damping: 18, stiffness: 180, mass: 0.8, velocity: e.velocityY
                 });
             }
         });
@@ -494,7 +530,7 @@ export default function SwipeScreen() {
             if (idx >= photos.length) continue;
             cards.push(
                 <SwipeCard key={photos[idx].id} photo={photos[idx]} index={i}
-                    totalVisible={VISIBLE_CARDS} translateX={translateX} isTop={i === 0} />
+                    totalVisible={VISIBLE_CARDS} translateX={translateX} translateY={translateY} isTop={i === 0} />
             );
         }
         return cards;
@@ -546,8 +582,8 @@ export default function SwipeScreen() {
                     )}
                     <FadeSlideIn delay={1100}>
                         <Text style={s.introReady}>
-                            {totalClearedBytes > 0 
-                                ? `You've already freed up ${(totalClearedBytes / (1024 * 1024)).toFixed(1)} MB! \u2728` 
+                            {totalClearedBytes > 0
+                                ? `You've already freed up ${(totalClearedBytes / (1024 * 1024)).toFixed(1)} MB! \u2728`
                                 : "Let's free up some space! \u2728"}
                         </Text>
                     </FadeSlideIn>
@@ -565,8 +601,8 @@ export default function SwipeScreen() {
             {/* Header */}
             <View style={[s.header, { paddingTop: Math.max(insets.top, 12), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <ScalePress 
-                        style={{ padding: 4, marginRight: 4 }} 
+                    <ScalePress
+                        style={{ padding: 4, marginRight: 4 }}
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                             setShowIntro(true);
@@ -574,11 +610,14 @@ export default function SwipeScreen() {
                     >
                         <Ionicons name="home-outline" size={20} color="#6366f1" />
                     </ScalePress>
-                    <Text style={s.title}>
-                        Swipe to <Text style={s.titleBold}>Wipe</Text>
-                    </Text>
-                    <ScalePress 
-                        style={{ padding: 4, marginLeft: 2 }} 
+                    {/* Failsafe Hidden Tutorial Button on the Title string */}
+                    <ScalePress onPress={() => setTutorialStep(1)}>
+                        <Text style={s.title}>
+                            Swipe to <Text style={s.titleBold}>Wipe</Text>
+                        </Text>
+                    </ScalePress>
+                    <ScalePress
+                        style={{ padding: 4, marginLeft: 2 }}
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                             startSwipingSession(activeCatRef.current);
@@ -611,25 +650,28 @@ export default function SwipeScreen() {
                                 {renderCards()}
                             </Animated.View>
                         </GestureDetector>
-                        <Animated.View style={[s.ghostHandContainer, handStyle]} pointerEvents="none">
-                            <View style={s.ghostHandLabels}>
-                                <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 1]) }]}>
-                                    <View style={[s.ghostLabelPill, { backgroundColor: '#22c55e' }]}>
-                                        <Ionicons name="heart" size={14} color="#fff" />
-                                        <Text style={s.ghostLabelTxt}>Swipe Right to Keep</Text>
-                                    </View>
-                                </Animated.View>
-                                <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, -SWIPE_THRESHOLD], [0, 1]) }]}>
-                                    <View style={[s.ghostLabelPill, { backgroundColor: '#ef4444' }]}>
-                                        <Ionicons name="trash" size={14} color="#fff" />
-                                        <Text style={s.ghostLabelTxt}>Swipe Left to Delete</Text>
-                                    </View>
-                                </Animated.View>
-                            </View>
-                            <View style={s.ghostHandCircle}>
-                                <FontAwesome5 name="hand-pointer" size={30} color="#ffffff" style={{ marginLeft: 6, marginTop: 4, transform: [{ rotate: '-15deg' }] }} />
-                            </View>
-                        </Animated.View>
+                        
+                        {tutorialStepState === 1 && (
+                            <Animated.View style={[s.ghostHandContainer, handStyle]} pointerEvents="none">
+                                <View style={s.ghostHandLabels}>
+                                    <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP) }]}>
+                                        <View style={[s.ghostLabelPill, { backgroundColor: '#22c55e' }]}>
+                                            <Ionicons name="heart" size={14} color="#fff" />
+                                            <Text style={s.ghostLabelTxt}>Swipe Right to Keep</Text>
+                                        </View>
+                                    </Animated.View>
+                                    <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, -SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP) }]}>
+                                        <View style={[s.ghostLabelPill, { backgroundColor: '#ef4444' }]}>
+                                            <Ionicons name="trash" size={14} color="#fff" />
+                                            <Text style={s.ghostLabelTxt}>Swipe Left to Delete</Text>
+                                        </View>
+                                    </Animated.View>
+                                </View>
+                                <View style={s.ghostHandCircle}>
+                                    <FontAwesome5 name="hand-pointer" size={30} color="#ffffff" style={{ marginLeft: 6, marginTop: 4, transform: [{ rotate: '-15deg' }] }} />
+                                </View>
+                            </Animated.View>
+                        )}
                     </View>
                 ) : (
                     <View style={s.emptyState}>
@@ -644,6 +686,34 @@ export default function SwipeScreen() {
                     </View>
                 )}
             </View>
+
+            {/* Step 3 (was 2) Tutorial Overlay (The Bin Pointer) */}
+            {tutorialStepState === 3 && (
+                <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999, justifyContent: 'center' }]} pointerEvents="box-none">
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]} />
+                    
+                    <Animated.View entering={FadeInDown.duration(600).delay(300).springify()} style={s.tutBinOverlay}>
+                        <View style={s.tutIconWrap}>
+                            <Ionicons name="shield-checkmark" size={44} color="#34C759" />
+                        </View>
+                        <Text style={s.tutBinTitle}>Safe in the Bin! 🛡️</Text>
+                        <Text style={s.tutBinDesc}>
+                            Don't panic! Trashed photos are never deleted instantly. They wait safely in your <Text style={{fontWeight: '800', color: '#fff'}}>Review Bin</Text> first.
+                        </Text>
+                        <Text style={s.tutBinDesc2}>
+                            You can permanently delete them or restore them later.
+                        </Text>
+                        
+                        <ScalePress style={s.tutBinBtn} onPress={completeTutorial}>
+                            <Text style={s.tutBinBtnText}>Got it!</Text>
+                        </ScalePress>
+                    </Animated.View>
+
+                    <Animated.View style={s.tutArrowContainer}>
+                        <RNAnimated.Text style={s.tutArrow}>↓</RNAnimated.Text>
+                    </Animated.View>
+                </View>
+            )}
 
             {/* Action Bar */}
             {currentPhoto && (
@@ -718,7 +788,7 @@ export default function SwipeScreen() {
                                         console.warn('Sharing URI is still virtual:', shareUri);
                                     }
 
-                                    const shareMessage = "Hey, look what i found while cleaning my phone! \u2728\n\nDownload Swipe to Wipe: https://expo.dev/accounts/purvimotu/projects/photo-swipe";
+                                    const shareMessage = "Hey, look what i found while cleaning my phone! \u2728\n\nDownload Swipe to Wipe: https://apps.apple.com/us/app/swipe-to-wipe/id6761011430";
 
                                     if (Platform.OS === 'ios') {
                                         // WhatsApp on iOS often ignores the message when a file is shared.
@@ -943,8 +1013,8 @@ export default function SwipeScreen() {
                         colors={['rgba(0,0,0,0.92)', 'rgba(0,0,0,0.85)']}
                         style={StyleSheet.absoluteFill}
                     />
-                    
-                    <Animated.View 
+
+                    <Animated.View
                         entering={FadeInDown.duration(400)}
                         style={s.fullPreviewContent}
                     >
@@ -963,16 +1033,16 @@ export default function SwipeScreen() {
                                 />
                             )
                         )}
-                        
+
                         <View style={s.fullPreviewHeader}>
-                            <ScalePress 
+                            <ScalePress
                                 style={s.fullPreviewClose}
                                 onPress={() => setShowFullPreview(false)}
                             >
                                 <Ionicons name="close-circle" size={44} color="#ffffff" />
                             </ScalePress>
                         </View>
-                        
+
                         <View style={s.fullPreviewFooter}>
                             <Text style={s.fullPreviewTitle}>Full Preview</Text>
                             <Text style={s.fullPreviewSub}>Release to return to swiping</Text>
@@ -1093,10 +1163,10 @@ const s = StyleSheet.create({
         fontWeight: '600',
         marginTop: 2,
     },
-    headerRight: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        gap: 8 
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8
     },
     filterPill: {
         flexDirection: 'row', alignItems: 'center',
@@ -1293,4 +1363,26 @@ const s = StyleSheet.create({
         color: 'rgba(255,255,255,0.7)',
         fontSize: 14,
     },
+    
+    /* —————————————————— Tutorial Step 2 Styles —————————————————— */
+    tutBinOverlay: {
+        width: '85%',
+        alignSelf: 'center',
+        backgroundColor: '#1f2937',
+        borderRadius: 32,
+        paddingHorizontal: 28,
+        paddingTop: 36,
+        paddingBottom: 28,
+        alignItems: 'center',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 24 }, shadowOpacity: 0.6, shadowRadius: 32, elevation: 20,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)'
+    },
+    tutIconWrap: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(52,199,89,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+    tutBinTitle: { fontFamily: 'Syne_700Bold', color: '#fff', fontSize: 26, marginBottom: 12, textAlign: 'center' },
+    tutBinDesc: { fontFamily: 'DMSans_500Medium', color: '#d1d5db', fontSize: 16, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    tutBinDesc2: { fontFamily: 'DMSans_500Medium', color: '#9ca3af', fontSize: 14, textAlign: 'center', marginBottom: 28 },
+    tutBinBtn: { width: '100%', backgroundColor: '#fff', paddingVertical: 18, borderRadius: 16, alignItems: 'center' },
+    tutBinBtnText: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 18 },
+    tutArrowContainer: { position: 'absolute', bottom: Platform.OS === 'ios' ? 90 : 70, right: W * 0.2, alignItems: 'center' },
+    tutArrow: { fontSize: 64, color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: {width: 0, height: 4}, textShadowRadius: 8 },
 });

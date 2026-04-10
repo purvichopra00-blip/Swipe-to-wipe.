@@ -99,7 +99,20 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
     });
 
     const [photos, setPhotos] = useState<Photo[]>([]);
-    const [currentIndex, setCurrentIndex] = useState(0);
+    const [currentIndex, _setCurrentIndex] = useState(0);
+    const indexRef = useRef(0);
+    const setCurrentIndex = useCallback((val: number | ((prev: number) => number)) => {
+        if (typeof val === 'function') {
+            _setCurrentIndex(prev => {
+                const next = val(prev);
+                indexRef.current = next;
+                return next;
+            });
+        } else {
+            indexRef.current = val;
+            _setCurrentIndex(val);
+        }
+    }, []);
     const [keptPhotos, setKeptPhotos] = useState<Photo[]>([]);
     const [binPhotos, setBinPhotos] = useState<BinPhoto[]>([]);
     const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
@@ -401,40 +414,53 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
     const canUndo = undoStack.length > 0;
 
     const swipeRight = useCallback(() => {
-        if (currentIndex < 0 || currentIndex >= photos.length) return;
-        const photo = photos[currentIndex];
+        const localIndex = indexRef.current;
+        if (localIndex < 0 || localIndex >= photos.length) return;
+        
+        indexRef.current = localIndex + 1;
+        _setCurrentIndex(localIndex + 1);
+
+        const photo = photos[localIndex];
         setKeptPhotos(prev => [photo, ...prev]);
         setUndoStack(prev => [...prev, { photo, action: 'keep' }]);
-        setCurrentIndex(prev => prev + 1);
         setSessionStats(s => ({ ...s, swiped: s.swiped + 1, kept: s.kept + 1 }));
         setTotalKeptPhotos(prev => prev + 1);
-    }, [currentIndex, photos]);
+    }, [photos]);
 
-    const swipeLeft = useCallback(async () => {
-        if (currentIndex < 0 || currentIndex >= photos.length) return;
-        const photo = photos[currentIndex];
+    const swipeLeft = useCallback(() => {
+        const localIndex = indexRef.current;
+        if (localIndex < 0 || localIndex >= photos.length) return;
+        
+        indexRef.current = localIndex + 1;
+        _setCurrentIndex(localIndex + 1);
 
-        let fileSize = photo.fileSize || 0;
-        if (!fileSize) {
-            try {
-                const info = await MediaLibrary.getAssetInfoAsync(photo.id, { shouldDownloadFromNetwork: false });
-                const fi = await FileSystem.getInfoAsync(info.localUri || info.uri);
-                if (fi.exists && !fi.isDirectory) fileSize = (fi as any).size ?? 0;
-            } catch { /* ignore */ }
-        }
-        if (!fileSize) fileSize = photo.mediaType === 'video' ? 15 * 1024 * 1024 : 3 * 1024 * 1024;
+        const photo = photos[localIndex];
+        const initialFileSize = photo.fileSize || (photo.mediaType === 'video' ? 15 * 1024 * 1024 : 3 * 1024 * 1024);
 
-        const binPhoto: BinPhoto = { ...photo, deletedAt: Date.now(), fileSize };
-        setBinPhotos(prev => {
-            // Prevent same ID from entering twice
-            if (prev.find(p => p.id === photo.id)) return prev;
-            return [binPhoto, ...prev];
-        });
-        setUndoStack(prev => [...prev, { photo, action: 'bin', fileSize }]);
-        setCurrentIndex(prev => prev + 1);
-        setSessionStats(s => ({ ...s, swiped: s.swiped + 1, deleted: s.deleted + 1, mbFreed: s.mbFreed + (fileSize / (1024 * 1024)) }));
+        // Synchronously update UI state to avoid any delay
+        setUndoStack(prev => [...prev, { photo, action: 'bin', fileSize: initialFileSize }]);
+        setSessionStats(s => ({ ...s, swiped: s.swiped + 1, deleted: s.deleted + 1, mbFreed: s.mbFreed + (initialFileSize / (1024 * 1024)) }));
         setTotalBinnedPhotos(prev => prev + 1);
-    }, [currentIndex, photos]);
+
+        // Process heavy filesystem fetching in the background asynchronously
+        (async () => {
+            let actualFileSize = photo.fileSize || 0;
+            if (!actualFileSize) {
+                try {
+                    const info = await MediaLibrary.getAssetInfoAsync(photo.id, { shouldDownloadFromNetwork: false });
+                    const fi = await FileSystem.getInfoAsync(info.localUri || info.uri);
+                    if (fi.exists && !fi.isDirectory) actualFileSize = (fi as any).size ?? 0;
+                } catch { /* ignore */ }
+            }
+            if (!actualFileSize) actualFileSize = initialFileSize;
+
+            const binPhoto: BinPhoto = { ...photo, deletedAt: Date.now(), fileSize: actualFileSize };
+            setBinPhotos(prev => {
+                if (prev.find(p => p.id === photo.id)) return prev;
+                return [binPhoto, ...prev];
+            });
+        })();
+    }, [photos]);
 
     const undo = useCallback(() => {
         if (undoStack.length === 0) return;

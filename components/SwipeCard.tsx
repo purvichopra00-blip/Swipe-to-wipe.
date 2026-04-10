@@ -9,6 +9,7 @@ import Animated, {
     interpolate,
     Extrapolation,
     SharedValue,
+    useSharedValue,
 } from 'react-native-reanimated';
 import { Photo } from '../constants/photos';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,10 +23,13 @@ interface SwipeCardProps {
     index: number;
     totalVisible: number;
     translateX: SharedValue<number>;
+    translateY?: SharedValue<number>;
     isTop: boolean;
 }
 
-const SwipeCard = memo(({ photo, index, totalVisible, translateX, isTop }: SwipeCardProps) => {
+const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, isTop }: SwipeCardProps) => {
+    const fallbackY = useSharedValue(0);
+    const safeTranslateY = translateY ?? fallbackY;
     const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
     
     const player = useVideoPlayer(photo.mediaType === 'video' ? (resolvedVideoUri || photo.url) : null, (p) => {
@@ -54,13 +58,29 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, isTop }: Swipe
     // 1. Optimized Animation: Only animate the top card
     const cardStyle = useAnimatedStyle(() => {
         if (!isTop) {
-            // Background cards: Static transform for performance
+            // Background cards: Animate forward seamlessly as top card is swiped
+            const progress = interpolate(
+                Math.abs(translateX.value),
+                [0, SWIPE_THRESHOLD],
+                [0, 1],
+                Extrapolation.CLAMP
+            );
+
+            const currentScale = 1 - index * 0.06;
+            const nextScale = 1 - (index - 1) * 0.06;
+            const scale = interpolate(progress, [0, 1], [currentScale, nextScale], Extrapolation.CLAMP);
+
+            const currentYDepth = index * -15; // Negative Y puts it slightly higher like a physical stack
+            const nextYDepth = (index - 1) * -15;
+            const transY = interpolate(progress, [0, 1], [currentYDepth, nextYDepth], Extrapolation.CLAMP);
+
             return {
                 transform: [
-                    { scale: 1 - index * 0.04 },
-                    { translateY: index * 10 }
+                    { scale },
+                    { translateY: transY }
                 ],
                 zIndex: totalVisible - index,
+                opacity: 1 // Only needed if you want deep cards to fade in, but solid stack looks better
             };
         }
 
@@ -68,14 +88,18 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, isTop }: Swipe
         const rotate = interpolate(
             translateX.value,
             [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
-            [-6, 0, 6], // Extra-tight rotation for high-speed stability
+            [-8, 0, 8], // slightly more rotation for a more fluid feel
             Extrapolation.CLAMP
         );
 
+        const currentY = safeTranslateY.value;
+
         return {
             zIndex: totalVisible,
+            transformOrigin: 'bottom center',
             transform: [
                 { translateX: translateX.value },
+                { translateY: currentY },
                 { rotate: `${rotate}deg` },
             ],
         };
@@ -83,28 +107,38 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, isTop }: Swipe
 
     // KEEP stamp — only visible when swiping RIGHT (positive X)
     const likeOpacity = useAnimatedStyle(() => {
-        if (!isTop || translateX.value <= 0) return { opacity: 0 };
-        return {
-            opacity: interpolate(
-                translateX.value,
-                [0, SWIPE_THRESHOLD * 0.4, SWIPE_THRESHOLD],
-                [0, 0.7, 1],
-                Extrapolation.CLAMP
-            ),
-        };
+        if (!isTop || translateX.value <= 0) return { opacity: 0, transform: [{ scale: 0.8 }] };
+        const opacity = interpolate(
+            translateX.value,
+            [0, SWIPE_THRESHOLD * 0.4, SWIPE_THRESHOLD],
+            [0, 0.7, 1],
+            Extrapolation.CLAMP
+        );
+        const scale = interpolate(
+            translateX.value,
+            [0, SWIPE_THRESHOLD * 0.4, SWIPE_THRESHOLD],
+            [1.4, 1.1, 1],
+            Extrapolation.CLAMP
+        );
+        return { opacity, transform: [{ scale }] };
     });
 
     // DELETE stamp — only visible when swiping LEFT (negative X)
     const nopeOpacity = useAnimatedStyle(() => {
-        if (!isTop || translateX.value >= 0) return { opacity: 0 };
-        return {
-            opacity: interpolate(
-                translateX.value,
-                [0, -SWIPE_THRESHOLD * 0.4, -SWIPE_THRESHOLD],
-                [0, 0.7, 1],
-                Extrapolation.CLAMP
-            ),
-        };
+        if (!isTop || translateX.value >= 0) return { opacity: 0, transform: [{ scale: 0.8 }] };
+        const opacity = interpolate(
+            translateX.value,
+            [0, -SWIPE_THRESHOLD * 0.4, -SWIPE_THRESHOLD],
+            [0, 0.7, 1],
+            Extrapolation.CLAMP
+        );
+        const scale = interpolate(
+            translateX.value,
+            [0, -SWIPE_THRESHOLD * 0.4, -SWIPE_THRESHOLD],
+            [1.4, 1.1, 1],
+            Extrapolation.CLAMP
+        );
+        return { opacity, transform: [{ scale }] };
     });
 
     const formatDuration = (seconds?: number) => {
@@ -122,8 +156,8 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, isTop }: Swipe
     };
 
     return (
-        <View style={styles.shadowWrapper}>
-            <Animated.View style={[styles.card, cardStyle]}>
+        <Animated.View style={[styles.shadowWrapper, cardStyle]}>
+            <View style={styles.card}>
                 {photo.mediaType === 'video' ? (
                     <VideoView
                         player={player}
@@ -187,8 +221,8 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, isTop }: Swipe
                         <Text style={styles.filename} numberOfLines={1}>{photo.filename}</Text>
                     )}
                 </View>
-            </Animated.View>
-        </View>
+            </View>
+        </Animated.View>
     );
 }, (prevProps, nextProps) => {
     // 2. Custom memo comparison for extreme performance

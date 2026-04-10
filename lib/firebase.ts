@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+// @ts-ignore – getReactNativePersistence typing varies across firebase SDK versions
 import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -16,7 +17,7 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Auth with persistence
+// Initialize Auth with AsyncStorage persistence
 export const auth = initializeAuth(app, {
     persistence: getReactNativePersistence(AsyncStorage)
 });
