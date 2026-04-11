@@ -810,10 +810,19 @@ export default function SwipeScreen() {
                                         }, 1000);
                                     } else {
                                         // Android: Sharing.shareAsync is better for files.
+                                        await Clipboard.setStringAsync(shareMessage);
                                         await Sharing.shareAsync(shareUri, {
                                             dialogTitle: shareMessage,
                                             mimeType: isVideo ? 'video/mp4' : 'image/jpeg',
                                         });
+                                        
+                                        setTimeout(() => {
+                                            Alert.alert(
+                                                "Message Copied!",
+                                                "Android apps often drop the message when sharing files directly. We've copied the message to your clipboard so you can just 'Paste' it in the chat! \u2728",
+                                                [{ text: "Got it!" }]
+                                            );
+                                        }, 1000);
                                     }
                                 } else {
                                     Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
