@@ -788,7 +788,7 @@ export default function SwipeScreen() {
                                         console.warn('Sharing URI is still virtual:', shareUri);
                                     }
 
-                                    const shareMessage = "Hey, look what i found while cleaning my phone! \u2728\n\nDownload Swipe to Wipe: https://apps.apple.com/us/app/swipe-to-wipe/id6761011430";
+                                    const shareMessage = `Hey, look what I found while cleaning my phone! ✨\n\nGet Swipe to Wipe:\n🍏 iOS: https://apps.apple.com/us/app/swipe-to-wipe/id6761011430\n🤖 Android: https://play.google.com/store/apps/details?id=com.purvichopra.swipetowipe`;
 
                                     if (Platform.OS === 'ios') {
                                         // WhatsApp on iOS often ignores the message when a file is shared.
