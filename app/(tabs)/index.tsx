@@ -148,6 +148,7 @@ export default function SwipeScreen() {
     const [lastCelebrationCount, setLastCelebrationCount] = useState(0);
     const [lastSwipedId, setLastSwipedId] = useState<string | null>(null);
     const [adTriggerCounter, setAdTriggerCounter] = useState(0);
+    const favoritePulse = useSharedValue(0);
     const [adsShownThisSession, setAdsShownThisSession] = useState(0);
     const [interstitial, setInterstitial] = useState<any>(null);
     const [adLoaded, setAdLoaded] = useState(false);
@@ -418,22 +419,15 @@ export default function SwipeScreen() {
         transform: [{ translateY: interpolate(sortProgress.value, [0, 1], [400, 0], Extrapolation.CLAMP) }]
     }));
 
-    const handleSwipeRight = useCallback((isFavoriting?: boolean) => {
-        if (tutorialStepRef.current === 1) {
-            setTutorialStep(2); // Ghost hands disappear, wait quietly for left swipe
-            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '2');
-        }
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-        if (isFavoriting && currentPhoto) {
-            toggleFavorite(currentPhoto.id, true);
-        }
-
-        cancelAnimation(translateX);
-        cancelAnimation(translateY);
-        translateX.value = 0; // Reset FIRST to prevent new card from appearing off-screen
+    
+    const finalizeSwipeRight = useCallback(() => {
+        translateX.value = 0;
         translateY.value = 0;
         swipeRight();
+        processAds();
+    }, [swipeRight, translateX, translateY]);
+
+    const processAds = useCallback(() => {
         setAdTriggerCounter(prev => {
             const next = prev + 1;
             const schedule = AD_CONFIG.INTERSTITIAL_PROGRESSIVE_SCHEDULE;
@@ -446,7 +440,40 @@ export default function SwipeScreen() {
             }
             return next;
         });
-    }, [swipeRight, translateX, showAd, adsShownThisSession, currentPhoto, toggleFavorite]);
+    }, [showAd, adsShownThisSession]);
+
+    const handleSwipeRight = useCallback((isFavoriting?: boolean) => {
+        if (tutorialStepRef.current === 1) {
+            setTutorialStep(2);
+            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '2');
+        }
+
+        if (isFavoriting && currentPhoto) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            toggleFavorite(currentPhoto.id, true);
+            favoritePulse.value = withSequence(
+                withTiming(1, { duration: 400 }),
+                withDelay(200, withTiming(0, { duration: 300 }))
+            );
+
+            setTimeout(() => {
+                cancelAnimation(translateX);
+                cancelAnimation(translateY);
+                translateX.value = withTiming(W * 1.5, { duration: 400 }, () => {
+                    runOnJS(finalizeSwipeRight)();
+                });
+            }, 500);
+            return;
+        }
+
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        cancelAnimation(translateX);
+        cancelAnimation(translateY);
+        translateX.value = 0;
+        translateY.value = 0;
+        swipeRight();
+        processAds();
+    }, [swipeRight, translateX, translateY, currentPhoto, toggleFavorite, adsShownThisSession, adTriggerCounter]);
 
     const handleSwipeLeft = useCallback(() => {
         if (tutorialStepRef.current === 1 || tutorialStepRef.current === 2) {
@@ -666,6 +693,47 @@ export default function SwipeScreen() {
                         <GestureDetector gesture={combinedGesture}>
                             <Animated.View style={s.cardContainer}>
                                 {renderCards()}
+                                
+                                {/* Golden Favorite Overlay */}
+                                <Animated.View 
+                                    style={[
+                                        StyleSheet.absoluteFill, 
+                                        { 
+                                            borderRadius: 28, 
+                                            borderWidth: 10, 
+                                            borderColor: '#ffd700', 
+                                            pointerEvents: 'none',
+                                            zIndex: 999
+                                        },
+                                        useAnimatedStyle(() => ({
+                                            opacity: favoritePulse.value,
+                                            transform: [{ scale: interpolate(favoritePulse.value, [0, 1], [0.98, 1.05]) }]
+                                        }))
+                                    ]} 
+                                />
+                                <Animated.View 
+                                    style={[
+                                        { 
+                                            position: 'absolute',
+                                            zIndex: 1000,
+                                            pointerEvents: 'none',
+                                            alignSelf: 'center',
+                                            top: '30%'
+                                        },
+                                        useAnimatedStyle(() => ({
+                                            opacity: favoritePulse.value,
+                                            transform: [
+                                                { scale: interpolate(favoritePulse.value, [0, 1], [0, 2.5]) },
+                                                { translateY: interpolate(favoritePulse.value, [0, 1], [0, -150]) },
+                                                { rotate: interpolate(favoritePulse.value, [0, 1], [0, 15]) + 'deg' }
+                                            ]
+                                        }))
+                                    ]}
+                                >
+                                    <View style={{ shadowColor: '#ffd700', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.8, shadowRadius: 20 }}>
+                                        <Ionicons name="heart" size={140} color="#ffd700" />
+                                    </View>
+                                </Animated.View>
                             </Animated.View>
                         </GestureDetector>
                         
