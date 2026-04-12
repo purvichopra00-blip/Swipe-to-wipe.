@@ -149,6 +149,20 @@ export default function SwipeScreen() {
     const [lastSwipedId, setLastSwipedId] = useState<string | null>(null);
     const [adTriggerCounter, setAdTriggerCounter] = useState(0);
     const favoritePulse = useSharedValue(0);
+
+    const favoriteBorderAnim = useAnimatedStyle(() => ({
+        opacity: favoritePulse.value,
+        transform: [{ scale: interpolate(favoritePulse.value, [0, 1], [0.98, 1.05]) }]
+    }));
+
+    const favoriteHeartAnim = useAnimatedStyle(() => ({
+        opacity: favoritePulse.value,
+        transform: [
+            { scale: interpolate(favoritePulse.value, [0, 1], [0, 2.5]) },
+            { translateY: interpolate(favoritePulse.value, [0, 1], [0, -150]) },
+            { rotate: interpolate(favoritePulse.value, [0, 1], [0, 15]) + 'deg' }
+        ]
+    }));
     const [adsShownThisSession, setAdsShownThisSession] = useState(0);
     const [interstitial, setInterstitial] = useState<any>(null);
     const [adLoaded, setAdLoaded] = useState(false);
@@ -721,10 +735,7 @@ export default function SwipeScreen() {
                                             pointerEvents: 'none',
                                             zIndex: 999
                                         },
-                                        useAnimatedStyle(() => ({
-                                            opacity: favoritePulse.value,
-                                            transform: [{ scale: interpolate(favoritePulse.value, [0, 1], [0.98, 1.05]) }]
-                                        }))
+                                        favoriteBorderAnim
                                     ]} 
                                 />
                                 <Animated.View 
@@ -736,20 +747,14 @@ export default function SwipeScreen() {
                                             alignSelf: 'center',
                                             top: '30%'
                                         },
-                                        useAnimatedStyle(() => ({
-                                            opacity: favoritePulse.value,
-                                            transform: [
-                                                { scale: interpolate(favoritePulse.value, [0, 1], [0, 2.5]) },
-                                                { translateY: interpolate(favoritePulse.value, [0, 1], [0, -150]) },
-                                                { rotate: interpolate(favoritePulse.value, [0, 1], [0, 15]) + 'deg' }
-                                            ]
-                                        }))
+                                        favoriteHeartAnim
                                     ]}
                                 >
                                     <View style={{ shadowColor: '#ffd700', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.8, shadowRadius: 20 }}>
                                         <Ionicons name="heart" size={140} color="#ffd700" />
                                     </View>
                                 </Animated.View>
+
                             </Animated.View>
                         </GestureDetector>
                         
