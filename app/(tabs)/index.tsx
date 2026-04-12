@@ -735,7 +735,7 @@ export default function SwipeScreen() {
 
             {/* Action Bar */}
             {currentPhoto && (
-                <View style={[s.actions, { paddingBottom: Math.max(insets.bottom, 20) + 10 }]}>
+                <View style={[s.actions, { paddingBottom: Math.max(insets.bottom, 20) + 150 }]}>
                     <ScalePress
                         style={[s.smallBtn, !canUndo && { opacity: 0.3 }]}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); undo(); }}
@@ -1224,9 +1224,9 @@ const s = StyleSheet.create({
         marginTop: 60 // Position hand below the labels
     },
 
-    actions: { zIndex: 100,
+    actions: { zIndex: 9999,
         flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-        gap: 12, paddingBottom: 30, paddingTop: 10,
+        gap: 20, paddingHorizontal: 20,
     },
     mainBtn: {
         width: 72, height: 72, borderRadius: 36,
