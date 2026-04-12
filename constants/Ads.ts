@@ -24,7 +24,7 @@ export const AD_CONFIG = {
             : 'ca-app-pub-4536210339227120/7749220084'
     ),
 
-    // Progressive frequency: 25 swipes first, then 20, 20, 20, then 15, then floor at 10.
-    INTERSTITIAL_PROGRESSIVE_SCHEDULE: [25, 20, 20, 20, 15],
-    INTERSTITIAL_MIN_INTERVAL: 10,
+    // Progressive frequency: Custom schedule [40, 20, 25, 15, 15]
+    INTERSTITIAL_PROGRESSIVE_SCHEDULE: [40, 20, 25, 15, 15],
+    INTERSTITIAL_MIN_INTERVAL: 15,
 };
