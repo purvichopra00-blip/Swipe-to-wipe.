@@ -3,6 +3,7 @@ import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import { ActionSheetIOS, Platform, LogBox } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Photo } from '../constants/photos';
 
@@ -413,7 +414,7 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
     const remainingCount = Math.max(0, photos.length - currentIndex);
     const canUndo = undoStack.length > 0;
 
-    const swipeRight = useCallback(() => {
+    const swipeRight = useCallback(async () => {
         const localIndex = indexRef.current;
         if (localIndex < 0 || localIndex >= photos.length) return;
         
@@ -421,13 +422,22 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         _setCurrentIndex(localIndex + 1);
 
         const photo = photos[localIndex];
+        
+        // Native Favorite in Gallery
+        try {
+            await MediaLibrary.setIsFavoriteAsync(photo.id, true);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch (err) {
+            console.warn('Favoriting failed:', err);
+        }
+
         setKeptPhotos(prev => [photo, ...prev]);
         setUndoStack(prev => [...prev, { photo, action: 'keep' }]);
         setSessionStats(s => ({ ...s, swiped: s.swiped + 1, kept: s.kept + 1 }));
         setTotalKeptPhotos(prev => prev + 1);
     }, [photos]);
 
-    const swipeLeft = useCallback(() => {
+    const swipeLeft = useCallback(async () => {
         const localIndex = indexRef.current;
         if (localIndex < 0 || localIndex >= photos.length) return;
         
@@ -437,45 +447,48 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         const photo = photos[localIndex];
         const initialFileSize = photo.fileSize || (photo.mediaType === 'video' ? 15 * 1024 * 1024 : 3 * 1024 * 1024);
 
-        // Synchronously update UI state to avoid any delay
-        setUndoStack(prev => [...prev, { photo, action: 'bin', fileSize: initialFileSize }]);
-        setSessionStats(s => ({ ...s, swiped: s.swiped + 1, deleted: s.deleted + 1, mbFreed: s.mbFreed + (initialFileSize / (1024 * 1024)) }));
-        setTotalBinnedPhotos(prev => prev + 1);
-
-        // Process heavy filesystem fetching in the background asynchronously
-        (async () => {
-            let actualFileSize = photo.fileSize || 0;
-            if (!actualFileSize) {
-                try {
-                    const info = await MediaLibrary.getAssetInfoAsync(photo.id, { shouldDownloadFromNetwork: false });
-                    const fi = await FileSystem.getInfoAsync(info.localUri || info.uri);
-                    if (fi.exists && !fi.isDirectory) actualFileSize = (fi as any).size ?? 0;
-                } catch { /* ignore */ }
+        // Instant Native Deletion (triggers system prompt)
+        try {
+            const deleted = await MediaLibrary.deleteAssetsAsync([photo.id]);
+            if (deleted) {
+                // Successful deletion: No undo possible
+                setSessionStats(s => ({ 
+                    ...s, 
+                    swiped: s.swiped + 1, 
+                    deleted: s.deleted + 1, 
+                    mbFreed: s.mbFreed + (initialFileSize / (1024 * 1024)) 
+                }));
+                setTotalDeletedPhotos(prev => prev + 1);
+                setTotalClearedBytes(prev => prev + initialFileSize);
+            } else {
+                // User cancelled: We don't advance the index so they can swipe it again or skip
+                indexRef.current = localIndex;
+                _setCurrentIndex(localIndex);
             }
-            if (!actualFileSize) actualFileSize = initialFileSize;
-
-            const binPhoto: BinPhoto = { ...photo, deletedAt: Date.now(), fileSize: actualFileSize };
-            setBinPhotos(prev => {
-                if (prev.find(p => p.id === photo.id)) return prev;
-                return [binPhoto, ...prev];
-            });
-        })();
+        } catch (err) {
+            console.warn('Native deletion failed:', err);
+            // Revert index on error
+            indexRef.current = localIndex;
+            _setCurrentIndex(localIndex);
+        }
     }, [photos]);
 
-    const undo = useCallback(() => {
+    const undo = useCallback(async () => {
         if (undoStack.length === 0) return;
         const last = undoStack[undoStack.length - 1];
         setUndoStack(prev => prev.slice(0, -1));
+
         if (last.action === 'keep') {
+            // Un-favorite in gallery
+            try {
+                await MediaLibrary.setIsFavoriteAsync(last.photo.id, false);
+            } catch { }
             setKeptPhotos(prev => prev.filter(p => p.id !== last.photo.id));
             setSessionStats(s => ({ ...s, swiped: Math.max(0, s.swiped - 1), kept: Math.max(0, s.kept - 1) }));
             setTotalKeptPhotos(prev => Math.max(0, prev - 1));
-        } else {
-            setBinPhotos(prev => prev.filter(p => p.id !== last.photo.id));
-            const mb = (last.fileSize || 0) / (1024 * 1024);
-            setSessionStats(s => ({ ...s, swiped: Math.max(0, s.swiped - 1), deleted: Math.max(0, s.deleted - 1), mbFreed: Math.max(0, s.mbFreed - mb) }));
-            setTotalBinnedPhotos(prev => Math.max(0, prev - 1));
         }
+        
+        // Advance current index back
         setCurrentIndex(prev => Math.max(0, prev - 1));
     }, [undoStack]);
     

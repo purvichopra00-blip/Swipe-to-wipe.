@@ -668,7 +668,7 @@ export default function SwipeScreen() {
                                     <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP) }]}>
                                         <View style={[s.ghostLabelPill, { backgroundColor: '#22c55e' }]}>
                                             <Ionicons name="heart" size={14} color="#fff" />
-                                            <Text style={s.ghostLabelTxt}>Swipe Right to Keep</Text>
+                                            <Text style={s.ghostLabelTxt}>Swipe Right to Favorite</Text>
                                         </View>
                                     </Animated.View>
                                     <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, -SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP) }]}>
@@ -688,7 +688,7 @@ export default function SwipeScreen() {
                     <View style={s.emptyState}>
                         <Text style={s.emptyEmoji}>{'\uD83C\uDF89'}</Text>
                         <Text style={s.emptyTitle}>All Done!</Text>
-                        <Text style={s.emptySub}>Check the Review Bin to clean up.</Text>
+                        <Text style={s.emptySub}>Your gallery is sparky clean! ✨</Text>
                         <Pressable style={s.goBackBtn} onPress={handleBack}>
                             <LinearGradient colors={['#ff6b6b', '#ff8e53']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.goBackGrad}>
                                 <Text style={s.goBackTxt}>Go Back</Text>
@@ -698,33 +698,7 @@ export default function SwipeScreen() {
                 )}
             </View>
 
-            {/* Step 3 (was 2) Tutorial Overlay (The Bin Pointer) */}
-            {tutorialStepState === 3 && (
-                <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999, justifyContent: 'center' }]} pointerEvents="box-none">
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]} />
-                    
-                    <Animated.View entering={FadeInDown.duration(600).delay(300).springify()} style={s.tutBinOverlay}>
-                        <View style={s.tutIconWrap}>
-                            <Ionicons name="shield-checkmark" size={44} color="#34C759" />
-                        </View>
-                        <Text style={s.tutBinTitle}>Safe in the Bin! 🛡️</Text>
-                        <Text style={s.tutBinDesc}>
-                            Don't panic! Trashed photos are never deleted instantly. They wait safely in your <Text style={{fontWeight: '800', color: '#fff'}}>Review Bin</Text> first.
-                        </Text>
-                        <Text style={s.tutBinDesc2}>
-                            You can permanently delete them or restore them later.
-                        </Text>
-                        
-                        <ScalePress style={s.tutBinBtn} onPress={completeTutorial}>
-                            <Text style={s.tutBinBtnText}>Got it!</Text>
-                        </ScalePress>
-                    </Animated.View>
-
-                    <Animated.View style={s.tutArrowContainer}>
-                        <RNAnimated.Text style={s.tutArrow}>↓</RNAnimated.Text>
-                    </Animated.View>
-                </View>
-            )}
+            {/* Tutorial Step 3 Removed since Review Bin is bypassed */}
 
             {/* Action Bar */}
             {currentPhoto && (
@@ -744,7 +718,7 @@ export default function SwipeScreen() {
                             translateX.value = withSpring(-W * 1.5, { velocity: -500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeLeft)());
                         }}
                     >
-                        <Ionicons name="close" size={40} color="#ef4444" />
+                        <Ionicons name="trash" size={36} color="#ef4444" />
                     </ScalePress>
                     <ScalePress
                         style={[s.smallBtn]}
@@ -838,7 +812,7 @@ export default function SwipeScreen() {
                             translateX.value = withSpring(W * 1.5, { velocity: 500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeRight)());
                         }}
                     >
-                        <Ionicons name="heart" size={36} color="#22c55e" />
+                        <Ionicons name="heart" size={36} color="#ec4899" />
                     </ScalePress>
                     <ScalePress style={s.smallBtn} onPress={openInfo}>
                         <Ionicons name="information" size={22} color="#fca5a5" />
@@ -882,11 +856,11 @@ export default function SwipeScreen() {
                                 <Text style={s.celebStatLabel}>Deleted</Text>
                             </View>
                             <View style={[s.celebStatRow, { backgroundColor: 'rgba(34,197,94,0.1)', borderColor: 'rgba(34,197,94,0.2)' }]}>
-                                <View style={[s.celebStatIcon, { backgroundColor: 'rgba(34,197,94,0.2)' }]}>
-                                    <Ionicons name="heart" size={16} color="#22c55e" />
+                                <View style={[s.celebStatIcon, { backgroundColor: 'rgba(236,72,153,0.15)' }]}>
+                                    <Ionicons name="heart" size={16} color="#ec4899" />
                                 </View>
-                                <Text style={[s.celebStatNum, { color: '#22c55e' }]}>{sessionStats.kept}</Text>
-                                <Text style={s.celebStatLabel}>Kept</Text>
+                                <Text style={[s.celebStatNum, { color: '#ec4899' }]}>{sessionStats.kept}</Text>
+                                <Text style={s.celebStatLabel}>Favorited</Text>
                             </View>
                         </View>
                         <View style={s.progressWrap}>
@@ -903,8 +877,8 @@ export default function SwipeScreen() {
                                 <Text style={s.celebPrimaryTxt}>Continue Swiping</Text>
                             </LinearGradient>
                         </Pressable>
-                        <Pressable style={s.celebSecBtn} onPress={() => { closeCelebration(); handleBack(); router.push('/bin'); }}>
-                            <Text style={s.celebSecTxt}>View Bin</Text>
+                        <Pressable style={s.celebSecBtn} onPress={() => { closeCelebration(); handleBack(); }}>
+                            <Text style={s.celebSecTxt}>Done</Text>
                         </Pressable>
                     </RNAnimated.View>
                 </Pressable>
@@ -1227,7 +1201,7 @@ const s = StyleSheet.create({
         shadowColor: 'rgba(239,68,68,0.25)', shadowOpacity: 1,
     },
     keepBtn: {
-        shadowColor: 'rgba(34,197,94,0.25)', shadowOpacity: 1,
+        shadowColor: 'rgba(236,72,153,0.25)', shadowOpacity: 1,
     },
     smallBtn: {
         width: 50, height: 50, borderRadius: 25,
