@@ -735,7 +735,7 @@ export default function SwipeScreen() {
 
             {/* Action Bar */}
             {currentPhoto && (
-                <View style={[s.actions, { paddingBottom: Math.max(insets.bottom, 20) + 144 }]}>
+                <View style={[s.actions, { paddingBottom: Math.max(insets.bottom, 20) + 10 }]}>
                     <ScalePress
                         style={[s.smallBtn, !canUndo && { opacity: 0.3 }]}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); undo(); }}
@@ -748,7 +748,9 @@ export default function SwipeScreen() {
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
                             playDeleteSound();
-                            translateX.value = withSpring(-W * 1.5, { velocity: -500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeLeft)());
+                            translateX.value = withTiming(-W * 1.5, { duration: 300 }, () => {
+                                runOnJS(handleSwipeLeft)();
+                            });
                         }}
                     >
                         <Ionicons name="close" size={40} color="#ffffff" />
@@ -842,7 +844,9 @@ export default function SwipeScreen() {
                         style={[s.mainBtn, s.keepBtn]}
                         onPress={() => {
                             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                            translateX.value = withSpring(W * 1.5, { velocity: 500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeRight)(true));
+                            translateX.value = withTiming(W * 1.5, { duration: 300 }, () => {
+                                runOnJS(handleSwipeRight)(true);
+                            });
                         }}
                     >
                         <Ionicons name="heart" size={36} color="#ffffff" />
@@ -1220,7 +1224,7 @@ const s = StyleSheet.create({
         marginTop: 60 // Position hand below the labels
     },
 
-    actions: {
+    actions: { zIndex: 100,
         flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
         gap: 12, paddingBottom: 30, paddingTop: 10,
     },
