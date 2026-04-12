@@ -18,6 +18,7 @@ import { useFonts } from 'expo-font';
 import { Syne_700Bold, Syne_800ExtraBold } from '@expo-google-fonts/syne';
 import { DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
 import { initAds } from '../lib/ads';
+import { initAnalytics, logEvent, TrackEvents } from '../lib/analytics';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -38,8 +39,10 @@ export default function RootLayout() {
 
     useEffect(() => {
         async function prepare() {
+            initAnalytics();
             await initAds();
             setIsReady(true);
+            logEvent(TrackEvents.SESSION_START);
         }
         
         async function checkForAppUpdates() {
