@@ -59,6 +59,7 @@ export default function BinScreen() {
     } = usePhotos();
     const [isDeleting, setIsDeleting] = useState(false);
     const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+    const [previewPhoto, setPreviewPhoto] = useState<BinPhoto | null>(null);
 
     // Initial Bin Tutorial 
     const BIN_TUTORIAL_KEY = '@bin_tutorial_v1';
@@ -220,7 +221,10 @@ export default function BinScreen() {
             >
                 <Pressable
                     style={styles.gridItem}
-                    onLongPress={() => handleDeleteOne(item)}
+                    onLongPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setPreviewPhoto(item);
+                    }}
                     onPress={() => handleRestore(item)}
                 >
                     <Image 
@@ -523,6 +527,60 @@ export default function BinScreen() {
                 </Pressable>
             </Modal>
 
+            {/* Full Preview Modal */}
+            <Modal
+                visible={!!previewPhoto}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setPreviewPhoto(null)}
+            >
+                {previewPhoto && (
+                    <View style={styles.previewContainer}>
+                        <StatusBar hidden />
+                        <View style={styles.previewHeader}>
+                            <ScalePress onPress={() => setPreviewPhoto(null)} style={styles.previewCloseBtn}>
+                                <Ionicons name="close" size={28} color="#fff" />
+                            </ScalePress>
+                        </View>
+                        
+                        <Image
+                            source={previewPhoto.url || 'https://via.placeholder.com/150'}
+                            style={styles.previewImage}
+                            contentFit="contain"
+                        />
+
+                        {/* Preview Footer Toolpad */}
+                        <View style={[styles.previewFooter, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+                            <ScalePress
+                                style={styles.previewActionBtn}
+                                onPress={() => {
+                                    setPreviewPhoto(null);
+                                    setTimeout(() => handleRestore(previewPhoto), 150);
+                                }}
+                            >
+                                <View style={[styles.previewActionIconCover, { backgroundColor: 'rgba(244,63,94,0.15)' }]}>
+                                    <Ionicons name="arrow-undo" size={24} color="#f43f5e" />
+                                </View>
+                                <Text style={[styles.previewActionText, { color: '#f43f5e' }]}>Restore</Text>
+                            </ScalePress>
+
+                            <ScalePress
+                                style={styles.previewActionBtn}
+                                onPress={() => {
+                                    setPreviewPhoto(null);
+                                    setTimeout(() => handleDeleteOne(previewPhoto), 150);
+                                }}
+                            >
+                                <View style={[styles.previewActionIconCover, { backgroundColor: 'rgba(239,68,68,0.15)' }]}>
+                                    <Ionicons name="trash" size={24} color="#ef4444" />
+                                </View>
+                                <Text style={[styles.previewActionText, { color: '#ef4444' }]}>Delete</Text>
+                            </ScalePress>
+                        </View>
+                    </View>
+                )}
+            </Modal>
+
             {/* Bin Tutorial Overlay */}
             {showBinTutorial && (
                 <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999, justifyContent: 'center' }]} pointerEvents="box-none">
@@ -537,6 +595,9 @@ export default function BinScreen() {
                             Tap any photo here to <Text style={{fontWeight: '800', color: '#fff'}}>Restore</Text> it back to your gallery.
                         </Text>
                         <Text style={styles.tutBinDesc2}>
+                            <Text style={{fontWeight: '800', color: '#fff'}}>Long press</Text> a photo to preview it fullscreen and review it before deciding.
+                        </Text>
+                        <Text style={[styles.tutBinDesc2, { marginTop: 12 }]}>
                             Or, hit <Text style={{fontWeight: '800', color: '#ef4444'}}>Delete All</Text> at the bottom to permanently free up space.
                         </Text>
                         
@@ -806,4 +867,14 @@ const styles = StyleSheet.create({
     tutBinBtnText: { fontSize: 17, fontWeight: '800', color: '#1f2937' },
     tutArrowContainer: { position: 'absolute', bottom: 180, right: 100, alignItems: 'center' },
     tutArrow: { fontSize: 64, color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: {width: 0, height: 4}, textShadowRadius: 8 },
+
+    // Preview
+    previewContainer: { flex: 1, backgroundColor: '#000' },
+    previewHeader: { position: 'absolute', top: 50, right: 20, zIndex: 10 },
+    previewCloseBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+    previewImage: { width: '100%', height: '100%' },
+    previewFooter: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 48, paddingBottom: 60, paddingTop: 30, backgroundColor: 'rgba(0,0,0,0.7)' },
+    previewActionBtn: { alignItems: 'center', gap: 6 },
+    previewActionIconCover: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+    previewActionText: { fontWeight: '800', fontSize: 14 }
 });

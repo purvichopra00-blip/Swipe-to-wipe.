@@ -70,12 +70,12 @@ export default function RootLayout() {
 
                         if (isOutdated && trackViewUrl) {
                             Alert.alert(
-                                'Update Available! 🚀',
-                                'A new version of Swipe to Wipe with bug fixes and new features is available on the App Store.',
+                                'Update Required! 🚀',
+                                'A mandatory update for Swipe to Wipe is available. Please update to continue using the app.',
                                 [
-                                    { text: 'Later', style: 'cancel' },
                                     { text: 'Update Now', style: 'default', onPress: () => Linking.openURL(trackViewUrl) }
-                                ]
+                                ],
+                                { cancelable: false }
                             );
                         }
                     }

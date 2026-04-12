@@ -768,8 +768,9 @@ export default function SwipeScreen() {
                                         }
                                     }
 
-                                    // Fallback for Videos or if ImageManipulator failed:
-                                    if (Platform.OS === 'ios' && !shareUri.startsWith('file://')) {
+                                    // Universally ensure the shareUri is a physical local file://
+                                    // Android's Sharing.shareAsync will instantly FATAL crash if passed a content:// URI.
+                                    if (!shareUri.startsWith('file://')) {
                                         const ext = currentPhoto.filename?.split('.').pop() || (isVideo ? 'mp4' : 'jpg');
                                         const baseDir = (FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory;
                                         if (!baseDir) {
@@ -784,8 +785,7 @@ export default function SwipeScreen() {
                                     }
 
                                     if (!shareUri.startsWith('file://')) {
-                                        // Still on ph://, WhatsApp will likely fail, but let's try direct shareUri anyway
-                                        console.warn('Sharing URI is still virtual:', shareUri);
+                                        console.warn('Sharing URI is still virtual, proceeding cautiously:', shareUri);
                                     }
 
                                     const shareMessage = `Hey, look what I found while cleaning my phone! ✨\n\nGet Swipe to Wipe:\n🍏 iOS: https://apps.apple.com/us/app/swipe-to-wipe/id6761011430\n🤖 Android: https://play.google.com/store/apps/details?id=com.purvichopra.swipetowipe`;
