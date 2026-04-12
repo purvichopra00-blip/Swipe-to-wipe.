@@ -24,7 +24,7 @@ export const AD_CONFIG = {
             : 'ca-app-pub-4536210339227120/7749220084'
     ),
 
-    // Progressive frequency: Custom schedule [40, 20, 25, 15, 15]
+    // Progressive frequency: Custom schedule [40, 20, 25, 15, 15] (first ad at 40 swipes)
     INTERSTITIAL_PROGRESSIVE_SCHEDULE: [40, 20, 25, 15, 15],
     INTERSTITIAL_MIN_INTERVAL: 15,
 };
