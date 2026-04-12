@@ -146,6 +146,7 @@ export default function SwipeScreen() {
     const [lastCelebrationCount, setLastCelebrationCount] = useState(0);
     const [lastSwipedId, setLastSwipedId] = useState<string | null>(null);
     const [adTriggerCounter, setAdTriggerCounter] = useState(0);
+    const [adsShownThisSession, setAdsShownThisSession] = useState(0);
     const [interstitial, setInterstitial] = useState<any>(null);
     const [adLoaded, setAdLoaded] = useState(false);
 
@@ -428,8 +429,13 @@ export default function SwipeScreen() {
         swipeRight();
         setAdTriggerCounter(prev => {
             const next = prev + 1;
-            if (next >= AD_CONFIG.SWIPES_PER_INTERSTITIAL) {
+            const schedule = AD_CONFIG.INTERSTITIAL_PROGRESSIVE_SCHEDULE;
+            const target = schedule[adsShownThisSession] || AD_CONFIG.INTERSTITIAL_MIN_INTERVAL;
+            
+            if (next >= target) {
                 showAd();
+                setAdsShownThisSession(s => s + 1);
+                return 0; // Reset after triggering
             }
             return next;
         });
@@ -449,8 +455,13 @@ export default function SwipeScreen() {
         swipeLeft();
         setAdTriggerCounter(prev => {
             const next = prev + 1;
-            if (next >= AD_CONFIG.SWIPES_PER_INTERSTITIAL) {
+            const schedule = AD_CONFIG.INTERSTITIAL_PROGRESSIVE_SCHEDULE;
+            const target = schedule[adsShownThisSession] || AD_CONFIG.INTERSTITIAL_MIN_INTERVAL;
+
+            if (next >= target) {
                 showAd();
+                setAdsShownThisSession(s => s + 1);
+                return 0; // Reset after triggering
             }
             return next;
         });

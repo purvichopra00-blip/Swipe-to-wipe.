@@ -24,6 +24,7 @@ export const AD_CONFIG = {
             : 'ca-app-pub-4536210339227120/7749220084'
     ),
 
-    // How many swipes before showing an interstitial
-    SWIPES_PER_INTERSTITIAL: 50,
+    // Progressive frequency: 25 swipes first, then 20, 20, 20, then 15, then floor at 10.
+    INTERSTITIAL_PROGRESSIVE_SCHEDULE: [25, 20, 20, 20, 15],
+    INTERSTITIAL_MIN_INTERVAL: 10,
 };
