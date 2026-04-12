@@ -790,40 +790,23 @@ export default function SwipeScreen() {
 
                                     const shareMessage = `Hey, look what I found while cleaning my phone! ✨\n\nGet Swipe to Wipe:\n🍏 iOS: https://apps.apple.com/us/app/swipe-to-wipe/id6761011430\n🤖 Android: https://play.google.com/store/apps/details?id=com.purvichopra.swipetowipe`;
 
-                                    if (Platform.OS === 'ios') {
-                                        // WhatsApp on iOS often ignores the message when a file is shared.
-                                        // We copy it to the clipboard as a fallback so they can just "Paste".
-                                        await Clipboard.setStringAsync(shareMessage);
+                                    // Unify sharing: Use expo-sharing (Sharing.shareAsync) for both iOS AND Android
+                                    // Standard RN Share.share is known to crash on iOS when sharing local URLs in some contexts.
+                                    await Clipboard.setStringAsync(shareMessage);
+                                    
+                                    await Sharing.shareAsync(shareUri, {
+                                        dialogTitle: shareMessage,
+                                        mimeType: isVideo ? "video/mp4" : "image/jpeg",
+                                    });
 
-                                        await Share.share({
-                                            url: shareUri,
-                                            message: shareMessage,
-                                        });
-
-                                        // Subtle hint for WhatsApp users
-                                        setTimeout(() => {
-                                            Alert.alert(
-                                                "Message Copied!",
-                                                "WhatsApp sometimes skips the message. We've copied it to your clipboard so you can just 'Paste' it in the chat! \u2728",
-                                                [{ text: "Got it!" }]
-                                            );
-                                        }, 1000);
-                                    } else {
-                                        // Android: Sharing.shareAsync is better for files.
-                                        await Clipboard.setStringAsync(shareMessage);
-                                        await Sharing.shareAsync(shareUri, {
-                                            dialogTitle: shareMessage,
-                                            mimeType: isVideo ? 'video/mp4' : 'image/jpeg',
-                                        });
-                                        
-                                        setTimeout(() => {
-                                            Alert.alert(
-                                                "Message Copied!",
-                                                "Android apps often drop the message when sharing files directly. We've copied the message to your clipboard so you can just 'Paste' it in the chat! \u2728",
-                                                [{ text: "Got it!" }]
-                                            );
-                                        }, 1000);
-                                    }
+                                    // Post-share fallback alert
+                                    setTimeout(() => {
+                                        Alert.alert(
+                                            "Message Copied!",
+                                            "Social apps often skip the message when a file is shared directly. We've copied it to your clipboard so you can just 'Paste' it in the chat! \u2728",
+                                            [{ text: "Got it!" }]
+                                        );
+                                    }, 1000);
                                 } else {
                                     Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
                                 }
