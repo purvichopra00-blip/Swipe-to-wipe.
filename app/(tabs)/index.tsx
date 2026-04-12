@@ -475,31 +475,47 @@ export default function SwipeScreen() {
         processAds();
     }, [swipeRight, translateX, translateY, currentPhoto, toggleFavorite, adsShownThisSession, adTriggerCounter]);
 
-    const handleSwipeLeft = useCallback(() => {
-        if (tutorialStepRef.current === 1 || tutorialStepRef.current === 2) {
-            setTutorialStep(3); // Trigger Safe in Bin overlay
-            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '3');
-        }
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        playDeleteSound();
-        cancelAnimation(translateX);
-        cancelAnimation(translateY);
-        translateX.value = 0; // Reset FIRST
+    
+    const finalizeSwipeLeft = useCallback(() => {
+        translateX.value = 0;
         translateY.value = 0;
         swipeLeft();
-        setAdTriggerCounter(prev => {
-            const next = prev + 1;
-            const schedule = AD_CONFIG.INTERSTITIAL_PROGRESSIVE_SCHEDULE;
-            const target = schedule[adsShownThisSession] || AD_CONFIG.INTERSTITIAL_MIN_INTERVAL;
+        processAds();
+    }, [swipeLeft, translateX, translateY]);
 
-            if (next >= target) {
-                showAd();
-                setAdsShownThisSession(s => s + 1);
-                return 0; // Reset after triggering
+    const handleSwipeLeft = useCallback(async () => {
+        if (!currentPhoto) return;
+
+        if (tutorialStepRef.current === 1 || tutorialStepRef.current === 2) {
+            setTutorialStep(3);
+            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '3');
+        }
+
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        playDeleteSound ? playDeleteSound() : null;
+        
+        try {
+            // Trigger Apple's official delete permission prompt
+            const granted = await MediaLibrary.deleteAssetsAsync([currentPhoto.id]);
+            if (granted) {
+                // If user accepts, swipe it away and move to next
+                translateX.value = withTiming(-W * 1.5, { duration: 350 }, () => {
+                   runOnJS(finalizeSwipeLeft)();
+                });
+            } else {
+                // If user cancels, snap back
+                translateX.value = withSpring(0);
+                translateY.value = withSpring(0);
             }
-            return next;
-        });
-    }, [swipeLeft, translateX, playDeleteSound, showAd]);
+        } catch (err) {
+            console.error("Delete failed", err);
+            // Fallback: move to internal bin if system delete fails (e.g. on Android)
+            translateX.value = withTiming(-W * 1.5, { duration: 350 }, () => {
+               runOnJS(finalizeSwipeLeft)();
+            });
+        }
+    }, [swipeLeft, translateX, translateY, currentPhoto, adsShownThisSession, playDeleteSound]);
+
 
     const panGesture = Gesture.Pan()
         .activeOffsetX([-10, 10]) // Prevent jitter on vertical scroll
@@ -814,11 +830,7 @@ export default function SwipeScreen() {
                     <ScalePress
                         style={[s.mainBtn, s.deleteBtn]}
                         onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                            playDeleteSound();
-                            translateX.value = withTiming(-W * 1.5, { duration: 300 }, () => {
-                                runOnJS(handleSwipeLeft)();
-                            });
+                            runOnJS(handleSwipeLeft)();
                         }}
                     >
                         <Ionicons name="close" size={40} color="#ffffff" />
@@ -911,10 +923,7 @@ export default function SwipeScreen() {
                     <ScalePress
                         style={[s.mainBtn, s.keepBtn]}
                         onPress={() => {
-                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                            translateX.value = withTiming(W * 1.5, { duration: 300 }, () => {
-                                runOnJS(handleSwipeRight)(true);
-                            });
+                            runOnJS(handleSwipeRight)(true);
                         }}
                     >
                         <Ionicons name="heart" size={36} color="#ffffff" />
