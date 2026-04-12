@@ -497,37 +497,65 @@ export default function SwipeScreen() {
         processAds();
     }, [swipeLeft, translateX, translateY]);
 
-    const handleSwipeLeft = useCallback(async () => {
+    
+    const handleDirectFavorite = useCallback(() => {
         if (!currentPhoto) return;
+        
+        // Premium Golden Animation
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        toggleFavorite(currentPhoto.id, true);
+        favoritePulse.value = withSequence(
+            withTiming(1, { duration: 400 }),
+            withDelay(200, withTiming(0, { duration: 300 }))
+        );
 
-        if (tutorialStepRef.current === 1 || tutorialStepRef.current === 2) {
-            setTutorialStep(3);
-            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '3');
-        }
+        setTimeout(() => {
+            cancelAnimation(translateX);
+            cancelAnimation(translateY);
+            translateX.value = withTiming(W * 1.5, { duration: 400 }, () => {
+                runOnJS(finalizeSwipeRight)();
+            });
+        }, 500);
+    }, [currentPhoto, finalizeSwipeRight, toggleFavorite]);
+
+    const handleDirectDelete = useCallback(async () => {
+        if (!currentPhoto) return;
 
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         playDeleteSound ? playDeleteSound() : null;
         
         try {
-            // Trigger Apple's official delete permission prompt
+            // "Real Delete" with Apple Permission prompt
             const granted = await MediaLibrary.deleteAssetsAsync([currentPhoto.id]);
             if (granted) {
-                // If user accepts, swipe it away and move to next
                 translateX.value = withTiming(-W * 1.5, { duration: 350 }, () => {
                    runOnJS(finalizeSwipeLeft)();
                 });
             } else {
-                // If user cancels, snap back
                 translateX.value = withSpring(0);
                 translateY.value = withSpring(0);
             }
         } catch (err) {
-            console.error("Delete failed", err);
-            // Fallback: move to internal bin if system delete fails (e.g. on Android)
-            translateX.value = withTiming(-W * 1.5, { duration: 350 }, () => {
-               runOnJS(finalizeSwipeLeft)();
-            });
+            console.error("Direct delete failed", err);
+            // Fallback to binning if native delete fails
+            handleSwipeLeft();
         }
+    }, [currentPhoto, finalizeSwipeLeft, playDeleteSound, handleSwipeLeft]);
+
+    const handleSwipeLeft = useCallback(() => {
+        if (!currentPhoto) return;
+        if (tutorialStepRef.current === 1 || tutorialStepRef.current === 2) {
+            setTutorialStep(3);
+            AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '3');
+        }
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        playDeleteSound ? playDeleteSound() : null;
+        
+        // This is the traditional "Move to Review Bin" behavior
+        translateX.value = 0;
+        translateY.value = 0;
+        swipeLeft();
+        processAds();
     }, [swipeLeft, translateX, translateY, currentPhoto, adsShownThisSession, playDeleteSound]);
 
 
@@ -834,9 +862,7 @@ export default function SwipeScreen() {
                     </ScalePress>
                     <ScalePress
                         style={[s.mainBtn, s.deleteBtn]}
-                        onPress={() => {
-                            runOnJS(handleSwipeLeft)();
-                        }}
+                        onPress={() => { runOnJS(handleDirectDelete)(); }}
                     >
                         <Ionicons name="close" size={40} color="#ffffff" />
                     </ScalePress>
@@ -927,9 +953,7 @@ export default function SwipeScreen() {
                     </ScalePress>
                     <ScalePress
                         style={[s.mainBtn, s.keepBtn]}
-                        onPress={() => {
-                            runOnJS(handleSwipeRight)(true);
-                        }}
+                        onPress={() => { runOnJS(handleDirectFavorite)(); }}
                     >
                         <Ionicons name="heart" size={36} color="#ffffff" />
                     </ScalePress>
