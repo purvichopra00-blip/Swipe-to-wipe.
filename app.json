@@ -28,7 +28,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.purvichopra.swipetowipe"
+      "package": "com.swipetowipe.photocleaner"
     },
     "web": {
       "favicon": "./assets/favicon.png"
