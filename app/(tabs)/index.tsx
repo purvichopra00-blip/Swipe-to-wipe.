@@ -518,6 +518,7 @@ export default function SwipeScreen() {
         }, 500);
     }, [currentPhoto, finalizeSwipeRight, toggleFavorite]);
 
+    
     const handleDirectDelete = useCallback(async () => {
         if (!currentPhoto) return;
 
@@ -525,7 +526,6 @@ export default function SwipeScreen() {
         playDeleteSound ? playDeleteSound() : null;
         
         try {
-            // "Real Delete" with Apple Permission prompt
             const granted = await MediaLibrary.deleteAssetsAsync([currentPhoto.id]);
             if (granted) {
                 translateX.value = withTiming(-W * 1.5, { duration: 350 }, () => {
@@ -536,11 +536,18 @@ export default function SwipeScreen() {
                 translateY.value = withSpring(0);
             }
         } catch (err) {
-            console.error("Direct delete failed", err);
-            // Fallback to binning if native delete fails
-            handleSwipeLeft();
+            // Error 3072 = User Cancelled (PHPhotosErrorDomain)
+            const errStr = String(err);
+            if (errStr.includes("3072") || errStr.toLowerCase().includes("cancel")) {
+                translateX.value = withSpring(0);
+                translateY.value = withSpring(0);
+            } else {
+                console.error("Technical delete failure:", err);
+                handleSwipeLeft(); 
+            }
         }
     }, [currentPhoto, finalizeSwipeLeft, playDeleteSound, handleSwipeLeft]);
+
 
     const handleSwipeLeft = useCallback(() => {
         if (!currentPhoto) return;
