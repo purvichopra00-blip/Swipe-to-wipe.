@@ -869,7 +869,7 @@ export default function SwipeScreen() {
                     </ScalePress>
                     <ScalePress
                         style={[s.mainBtn, s.deleteBtn]}
-                        onPress={() => { runOnJS(handleDirectDelete)(); }}
+                        onPress={handleDirectDelete}
                     >
                         <Ionicons name="close" size={40} color="#ffffff" />
                     </ScalePress>
@@ -960,7 +960,7 @@ export default function SwipeScreen() {
                     </ScalePress>
                     <ScalePress
                         style={[s.mainBtn, s.keepBtn]}
-                        onPress={() => { runOnJS(handleDirectFavorite)(); }}
+                        onPress={handleDirectFavorite}
                     >
                         <Ionicons name="heart" size={36} color="#ffffff" />
                     </ScalePress>
