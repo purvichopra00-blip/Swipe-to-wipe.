@@ -6,12 +6,29 @@ import { usePhotos } from '../../contexts/PhotoContext';
 import { useCallback, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ONBOARDING_COMPLETED_KEY } from '../onboarding';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withRepeat, withTiming } from 'react-native-reanimated';
 
 const { width: W } = Dimensions.get('window');
-const TAB_WIDTH = (W - 48) / 2;
+const TAB_WIDTH = Math.max(10, (W - 48) / 3);
 
-function TabIcon({ name, color, focused, count, onPress }: { name: string, color: string, focused: boolean, count?: number, onPress: () => void }) {
+function PulseDot() {
+    const scale = useSharedValue(0.8);
+    const opacity = useSharedValue(1);
+
+    useEffect(() => {
+        scale.value = withRepeat(withTiming(1.4, { duration: 800 }), -1, true);
+        opacity.value = withRepeat(withTiming(0.4, { duration: 800 }), -1, true);
+    }, []);
+
+    const style = useAnimatedStyle(() => ({
+        transform: [{ scale: scale.value }],
+        opacity: opacity.value,
+    }));
+
+    return <Animated.View style={[styles.pulseDot, style]} />;
+}
+
+function TabIcon({ name, color, focused, count, onPress, isNew }: { name: string, color: string, focused: boolean, count?: number, onPress: () => void, isNew?: boolean }) {
     const scale = useSharedValue(1);
 
     useEffect(() => {
@@ -26,6 +43,7 @@ function TabIcon({ name, color, focused, count, onPress }: { name: string, color
         <Pressable onPress={onPress} style={styles.iconWrap}>
             <Animated.View style={[styles.iconContainer, animatedStyle]}>
                 <Ionicons name={name as any} size={24} color={color} />
+                {isNew && !focused && <PulseDot />}
                 {(count ?? 0) > 0 && (
                     <View style={styles.dot}>
                         <View style={styles.dotInner} />
@@ -37,7 +55,7 @@ function TabIcon({ name, color, focused, count, onPress }: { name: string, color
 }
 
 export default function TabLayout() {
-    const { binPhotos } = usePhotos();
+    const { binPhotos, setShowCalendar, calendarTutorialSeen, showIntro } = usePhotos();
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const indicatorPos = useSharedValue(0);
@@ -64,6 +82,7 @@ export default function TabLayout() {
             }}
             tabBar={(props) => {
                 const { state, navigation, descriptors } = props;
+
                 // Filter out screens with href: null to match our custom UI state
                 const visibleRoutes = state.routes.filter(route => {
                     const { options } = descriptors[route.key];
@@ -71,37 +90,51 @@ export default function TabLayout() {
                 });
 
                 return (
-                    <View style={[styles.tabBarContainer, { bottom: Math.max(insets.bottom, 20) }]}>
+                    <View style={[
+                        styles.tabBarContainer, 
+                        { bottom: Math.max(insets.bottom, 20) },
+                        showIntro && { display: 'none', height: 0, opacity: 0 }
+                    ]}>
                         <View style={styles.tabBarPill}>
                             <Animated.View style={[styles.indicator, indicatorStyle]} />
-                            {visibleRoutes.map((route, index) => {
-                                const { options } = descriptors[route.key];
-                                const isFocused = state.index === state.routes.findIndex(r => r.key === route.key);
+                            {(() => {
+                                const homeRoute = visibleRoutes.find(r => r.name === 'index');
+                                const binRoute = visibleRoutes.find(r => r.name === 'bin');
+                                
+                                return [
+                                    { route: homeRoute, index: 0, name: 'home' },
+                                    { virtual: true, name: 'calendar', index: 1 },
+                                    { route: binRoute, index: 2, name: 'trash' }
+                                ].map((item, index) => {
+                                    const isActive = item.virtual ? false : (state.index === (item.route?.name === 'index' ? 0 : 1));
+                                    const count = item.name === 'trash' ? binPhotos.length : 0;
 
-                                const onPress = () => {
-                                    const event = navigation.emit({
-                                        type: 'tabPress',
-                                        target: route.key,
-                                        canPreventDefault: true,
-                                    });
+                                    const onPress = () => {
+                                        if (item.virtual) {
+                                            navigation.navigate('index');
+                                            setShowCalendar(true);
+                                            indicatorPos.value = withSpring(1 * TAB_WIDTH, { damping: 15, stiffness: 150 });
+                                        } else if (item.route) {
+                                            navigation.navigate(item.route.name);
+                                            indicatorPos.value = withSpring(item.index * TAB_WIDTH, { damping: 15, stiffness: 150 });
+                                        }
+                                    };
 
-                                    if (!isFocused && !event.defaultPrevented) {
-                                        navigation.navigate(route.name);
-                                        indicatorPos.value = withSpring(index * TAB_WIDTH, { damping: 15, stiffness: 150 });
-                                    }
-                                };
-
-                                return (
-                                    <TabIcon
-                                        key={route.key}
-                                        name={route.name === 'index' ? (isFocused ? 'home' : 'home-outline') : (isFocused ? 'trash' : 'trash-outline')}
-                                        color={isFocused ? '#ff6b6b' : '#9ca3af'}
-                                        focused={isFocused}
-                                        onPress={onPress}
-                                        count={route.name === 'bin' ? binPhotos.length : 0}
-                                    />
-                                );
-                            })}
+                                    return (
+                                        <TabIcon
+                                            key={item.name}
+                                            name={item.name === 'home' ? (isActive ? 'home' : 'home-outline') : 
+                                                  item.name === 'calendar' ? 'calendar' :
+                                                  (isActive ? 'trash' : 'trash-outline')}
+                                            color={isActive ? '#ff6b6b' : '#9ca3af'}
+                                            focused={isActive}
+                                            onPress={onPress}
+                                            count={item.name === 'trash' ? binPhotos.length : 0}
+                                            isNew={item.name === 'calendar' && !calendarTutorialSeen}
+                                        />
+                                    );
+                                });
+                            })()}
                         </View>
                     </View>
                 );
@@ -139,7 +172,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 8,
         left: 8,
-        width: TAB_WIDTH - 16,
+        width: Math.max(0, TAB_WIDTH - 16),
         height: 48,
         backgroundColor: 'rgba(255,107,107,0.08)',
         borderRadius: 24,
@@ -161,4 +194,13 @@ const styles = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
     },
     dotInner: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444' },
+    pulseDot: {
+        position: 'absolute',
+        top: -2,
+        right: -2,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#ff6b6b',
+    },
 });

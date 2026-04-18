@@ -3,14 +3,14 @@ import { initializeApp } from 'firebase/app';
 import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Your web app's Firebase configuration
+// Your web app's Firebase configuration (Matched to production plist)
 const firebaseConfig = {
-    apiKey: "AIzaSyBV7kIh8wXvBsY6ZWRMc8jqtT38XScs1u4",
+    apiKey: "AIzaSyArGe4B5oP3c3sSO6GzZejJu13cwUlLQoM",
     authDomain: "swipe-to-wipe.firebaseapp.com",
     projectId: "swipe-to-wipe",
     storageBucket: "swipe-to-wipe.firebasestorage.app",
     messagingSenderId: "175347456697",
-    appId: "1:175347456697:web:e94de59b7892867d6c1968",
+    appId: "1:175347456697:ios:d77d8018b8358a8e6c1968",
     measurementId: "G-QD6DNG6V0Y"
 };
 

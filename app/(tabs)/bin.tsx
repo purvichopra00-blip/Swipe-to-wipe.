@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
     StyleSheet, View, Text, Pressable, Alert,
     ActivityIndicator, FlatList, Dimensions, StatusBar,
@@ -8,6 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePhotos } from '../../contexts/PhotoContext';
 import { Ionicons } from '@expo/vector-icons';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import * as MediaLibrary from 'expo-media-library';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { BinPhoto } from '../../contexts/PhotoContext';
@@ -60,6 +62,22 @@ export default function BinScreen() {
     const [isDeleting, setIsDeleting] = useState(false);
     const [isSettingsVisible, setIsSettingsVisible] = useState(false);
     const [previewPhoto, setPreviewPhoto] = useState<BinPhoto | null>(null);
+    const [previewVideoUri, setPreviewVideoUri] = useState<string | null>(null);
+
+    const fullPlayer = useVideoPlayer(previewPhoto && previewPhoto.mediaType === 'video' ? (previewVideoUri || previewPhoto.url) : null, (p) => {
+        p.loop = true;
+        p.play();
+    });
+
+    useEffect(() => {
+        if (previewPhoto && previewPhoto.mediaType === 'video') {
+            MediaLibrary.getAssetInfoAsync(previewPhoto.id).then(info => {
+                setPreviewVideoUri(info.localUri || info.uri);
+            });
+        } else {
+            setPreviewVideoUri(null);
+        }
+    }, [previewPhoto]);
 
     // Initial Bin Tutorial 
     const BIN_TUTORIAL_KEY = '@bin_tutorial_v1';
@@ -543,11 +561,19 @@ export default function BinScreen() {
                             </ScalePress>
                         </View>
                         
-                        <Image
-                            source={previewPhoto.url || 'https://via.placeholder.com/150'}
-                            style={styles.previewImage}
-                            contentFit="contain"
-                        />
+                        {previewPhoto.mediaType === 'video' ? (
+                            <VideoView
+                                player={fullPlayer}
+                                style={styles.previewImage}
+                                contentFit="contain"
+                            />
+                        ) : (
+                            <Image 
+                                source={previewPhoto.url} 
+                                style={styles.previewImage} 
+                                contentFit="contain" 
+                            />
+                        )}
 
                         {/* Preview Footer Toolpad */}
                         <View style={[styles.previewFooter, { paddingBottom: Math.max(insets.bottom, 20) }]}>

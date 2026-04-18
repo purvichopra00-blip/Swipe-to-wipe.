@@ -15,13 +15,21 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.purvichopra.swipetowipe",
-      "buildNumber": "24",
+      "bundleIdentifier": "com.swipetowipe.photocleaner",
+      "buildNumber": "44",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
         "NSPhotoLibraryAddUsageDescription": "Swipe to Wipe needs permission to save recovered photos back to your gallery.",
-        "NSUserTrackingUsageDescription": "Allows us to provide a more personalized experience and support the app with relevant ads."
+        "NSUserTrackingUsageDescription": "Allows us to provide a more personalized experience and support the app with relevant ads.",
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "photo-swipe",
+              "com.googleusercontent.apps.175347456697-d77d8018b8358a8e6c1968"
+            ]
+          }
+        ]
       },
       "googleServicesFile": "./GoogleService-Info.plist"
     },
@@ -30,7 +38,9 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.purvichopra.swipetowipe"
+      "package": "com.swipetowipe.photocleaner",
+      "versionCode": 44,
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -100,10 +110,20 @@
           "ios": {
             "newArchEnabled": true,
             "useFrameworks": "static"
+          },
+          "android": {
+            "newArchEnabled": true
           }
         }
       ],
-      "expo-tracking-transparency"
+      "expo-tracking-transparency",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "peakai-yd",
+          "project": "react-native"
+        }
+      ]
     ],
     "extra": {
       "router": {

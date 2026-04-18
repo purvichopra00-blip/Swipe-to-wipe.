@@ -14,14 +14,14 @@ export const AD_CONFIG = {
     BANNER_UNIT_ID: __DEV__ ? bannerTestId : (
         Platform.OS === 'ios' 
             ? 'ca-app-pub-4536210339227120/7941351227' 
-            : 'ca-app-pub-4536210339227120/7941351227'
+            : 'ca-app-pub-4536210339227120/5762145523'
     ),
 
     // PRODUCTION INTERSTITIAL IDs
     INTERSTITIAL_UNIT_ID: __DEV__ ? interstitialTestId : (
         Platform.OS === 'ios' 
             ? 'ca-app-pub-4536210339227120/7749220084' 
-            : 'ca-app-pub-4536210339227120/7749220084'
+            : 'ca-app-pub-4536210339227120/7099277925'
     ),
 
     // Progressive frequency: [30, 20, 25, 15, 15]

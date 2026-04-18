@@ -25,9 +25,10 @@ interface SwipeCardProps {
     translateX: SharedValue<number>;
     translateY?: SharedValue<number>;
     isTop: boolean;
+    hasFilter?: boolean;
 }
 
-const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, isTop }: SwipeCardProps) => {
+const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, isTop, hasFilter }: SwipeCardProps) => {
     const fallbackY = useSharedValue(0);
     const safeTranslateY = translateY ?? fallbackY;
     const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
@@ -198,11 +199,13 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, is
                 {/* Photo info */}
                 <View style={styles.infoContainer} pointerEvents="none">
                     <View style={styles.topRow}>
-                        <Text style={styles.date} numberOfLines={1}>
-                            {new Date(photo.creationTime || Date.now()).toLocaleDateString(undefined, {
-                                weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
-                            })}
-                        </Text>
+                        {!hasFilter && (
+                            <Text style={styles.date} numberOfLines={1}>
+                                {new Date(photo.creationTime || Date.now()).toLocaleDateString(undefined, {
+                                    weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+                                })}
+                            </Text>
+                        )}
                         <View style={styles.metaBadges}>
                             {!!photo.fileSize && (
                                 <View style={styles.badge}>

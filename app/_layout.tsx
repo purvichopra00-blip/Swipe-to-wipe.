@@ -9,7 +9,7 @@ import { ONBOARDING_COMPLETED_KEY } from './onboarding';
 import { AUTH_TOKEN_KEY } from './(auth)/login';
 import { PERMISSIONS_GRANTED_KEY } from './permissions';
 import { useState, useEffect } from 'react';
-import { Alert, Linking, Platform, View, Text, StyleSheet } from 'react-native';
+import { Alert, Linking, Platform, View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
 import Constants from 'expo-constants';
@@ -20,10 +20,16 @@ import { DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-googl
 import { initAds } from '../lib/ads';
 import { initAnalytics, logEvent, TrackEvents } from '../lib/analytics';
 import { requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
+import * as Sentry from '@sentry/react-native';
 
-SplashScreen.preventAutoHideAsync().catch(() => {});
+// Initialize Sentry ideally outside the component
+Sentry.init({
+    dsn: "https://a258b128c003ed4723d0d5ab29e15ed2@o4511228081340416.ingest.us.sentry.io/4511228088877056",
+    debug: __DEV__,
+    enableNative: true,
+});
 
-export default function RootLayout() {
+function RootLayout() {
     const router = useRouter();
     const segments = useSegments();
     const [isReady, setIsReady] = useState(false);
@@ -41,6 +47,9 @@ export default function RootLayout() {
     useEffect(() => {
         async function prepare() {
             try {
+                // Prevent splash hide until we are completely ready
+                await SplashScreen.preventAutoHideAsync().catch(() => {});
+
                 // Safe analytics init — never block boot
                 try { initAnalytics(); } catch (e) { console.warn('Analytics init failed', e); }
 
@@ -48,6 +57,9 @@ export default function RootLayout() {
                 if (Platform.OS === 'ios') {
                     try { await requestTrackingPermissionsAsync(); } catch (e) { console.warn('ATT failed', e); }
                 }
+
+                // Wait a moment for native bridge to settle on New Arch
+                await new Promise(resolve => setTimeout(resolve, 500));
 
                 // Safe ads init — never block boot
                 try { await initAds(); } catch (e) { console.warn('Ads init failed', e); }
@@ -66,7 +78,7 @@ export default function RootLayout() {
         async function checkForAppUpdates() {
             try {
                 if (Platform.OS !== 'ios') return;
-                const bundleId = Constants.expoConfig?.ios?.bundleIdentifier ?? 'com.purvichopra.swipetowipe';
+                const bundleId = Constants.expoConfig?.ios?.bundleIdentifier ?? 'com.swipetowipe.photocleaner';
                 const response = await fetch(`https://itunes.apple.com/lookup?bundleId=${bundleId}&t=${Date.now()}`);
                 const data = await response.json();
 
@@ -127,10 +139,11 @@ export default function RootLayout() {
                 if (completed !== 'true') {
                     if (segment !== 'onboarding') router.replace('/onboarding');
                 } else if (!token) {
-                    if (segment !== '(auth)') router.replace('/(auth)/login');
-                } else if (permissions !== 'true') {
-                    if (segment !== 'permissions') router.replace('/permissions');
+                    // No token after onboarding — onboarding did not complete correctly.
+                    // Re-run onboarding so the guest token gets set.
+                    router.replace('/onboarding');
                 } else {
+                    // Token exists (guest or real). Go to main app.
                     if (segment !== '(tabs)' && segment !== 'swipe') router.replace('/(tabs)');
                 }
             } catch (e) {
@@ -173,8 +186,14 @@ export default function RootLayout() {
                             <Ionicons name="wifi-outline" size={64} color="#ef4444" style={{ marginBottom: 20 }} />
                             <Text style={s.offlineTitle}>Connection Lost</Text>
                             <Text style={s.offlineSubtitle}>
-                                An internet connection is required to continue using Swipe to Wipe. Please reconnect.
+                                An internet connection is recommended for the best experience.
                             </Text>
+                            <Pressable 
+                                style={{ marginTop: 30, paddingVertical: 12, paddingHorizontal: 24, backgroundColor: '#f3f4f6', borderRadius: 12 }}
+                                onPress={() => setIsOffline(false)}
+                            >
+                                <Text style={{ fontFamily: 'DMSans_700Bold', color: '#4b5563' }}>Try Anyway</Text>
+                            </Pressable>
                         </View>
                     )}
 
@@ -184,6 +203,9 @@ export default function RootLayout() {
         </GestureHandlerRootView>
     );
 }
+
+// Wrap with Sentry
+export default Sentry.wrap(RootLayout);
 
 const s = StyleSheet.create({
     offlineOverlay: {
