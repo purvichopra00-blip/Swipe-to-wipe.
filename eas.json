@@ -18,6 +18,9 @@
     "production": {
       "distribution": "store",
       "autoIncrement": true,
+      "android": {
+        "googleServicesFile": "./google-services.json"
+      },
       "env": {
         "RCT_NEW_ARCH_ENABLED": "1",
         "USE_NEW_ARCHITECTURE": "1",
