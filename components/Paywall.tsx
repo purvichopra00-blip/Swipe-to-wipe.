@@ -249,8 +249,10 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
                                     <View style={[styles.ctaGradient, { backgroundColor: '#FF6B6B', opacity: (!product || isLoading) ? 0.7 : 1 }]}>
                                         {isLoading ? (
                                             <ActivityIndicator color="#fff" />
+                                        ) : !product ? (
+                                            <Text style={styles.ctaText}>Please wait...</Text>
                                         ) : (
-                                            <Text style={styles.ctaText}>{!product ? 'Connecting Store...' : 'Unlock Unlimited Cleaning'}</Text>
+                                            <Text style={styles.ctaText}>Unlock Unlimited Cleaning</Text>
                                         )}
                                     </View>
                                 </Pressable>

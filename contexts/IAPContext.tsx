@@ -134,6 +134,25 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
                     const products = await IAP.getProducts({ skus: [PRODUCT_ID] });
                     if (products && products.length > 0) {
                         setProduct(products[0]);
+                    } else {
+                        console.log('⚠️ No products loaded');
+                        
+                        // Only show alert if we are actually viewing the paywall or trying to purchase
+                        // To keep it clean, we just log and retry silently first
+                        setTimeout(async () => {
+                            try {
+                                const retryProducts = await IAP.getProducts({ skus: [PRODUCT_ID] });
+                                if (retryProducts && retryProducts.length > 0) {
+                                    setProduct(retryProducts[0]);
+                                } else {
+                                    // If even retry fails, we let the paywall's local state handle the "Please wait" 
+                                    // and the user can try to tap it which triggers another check.
+                                    console.log('⚠️ Retry also returned no products');
+                                }
+                            } catch (e) {
+                                console.log('Retry failed', e);
+                            }
+                        }, 2000);
                     }
                 }
             } catch (err) {
