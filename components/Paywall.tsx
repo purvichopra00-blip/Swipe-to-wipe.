@@ -27,17 +27,29 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
     const { isPro, product, purchaseProduct, restorePurchases, isLoading, addRewardSwipes } = useIAP();
     const { userToken } = usePhotos();
     const router = useRouter();
+    const [connError, setConnError] = useState(false);
 
     // ✅ AUTO-CLOSE WHEN PRO (Apple Success Flow)
     useEffect(() => {
         if (isPro && visible) {
-            // Short delay so the user can see the "Success" alert before it slides away
             const timer = setTimeout(() => {
                 onClose();
             }, 1000);
             return () => clearTimeout(timer);
         }
     }, [isPro, visible]);
+
+    // ✅ RESCUE TIMEOUT (If store hangs)
+    useEffect(() => {
+        if (visible && !product) {
+            const timer = setTimeout(() => {
+                if (!product) setConnError(true);
+            }, 15000); // 15 seconds
+            return () => clearTimeout(timer);
+        } else if (product) {
+            setConnError(false);
+        }
+    }, [visible, product]);
 
     const [rewardedAd, setRewardedAd] = useState<any>(null);
     const [isAdLoading, setIsAdLoading] = useState(false);
@@ -256,7 +268,7 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
                                         {isLoading ? (
                                             <ActivityIndicator color="#fff" />
                                         ) : !product ? (
-                                            <Text style={styles.ctaText}>Please wait...</Text>
+                                            <Text style={styles.ctaText}>{connError ? 'Retry Connection' : 'Please wait...'}</Text>
                                         ) : (
                                             <Text style={styles.ctaText}>Unlock Unlimited Cleaning</Text>
                                         )}
