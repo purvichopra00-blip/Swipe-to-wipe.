@@ -90,8 +90,14 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
                     return;
                 }
 
-                // 3. Initialize IAP Connection
-                await IAP.initConnection();
+                // 3. Initialize IAP Connection with aggressive retry
+                try {
+                    await IAP.initConnection();
+                } catch (connErr) {
+                    console.warn('First connection failed, retrying...', connErr);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await IAP.initConnection(); // Retry once immediately
+                }
 
                 // 4. Set up Listeners (Production Best Practice)
                 purchaseUpdateSubscription = IAP.purchaseUpdatedListener(async (purchase: IAP.Purchase) => {
@@ -129,31 +135,32 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
                     }
                 }
 
-                // 6. Fetch Product Info
-                if (Platform.OS === 'ios' && IAP.getProducts) {
-                    const products = await IAP.getProducts({ skus: [PRODUCT_ID] });
-                    if (products && products.length > 0) {
-                        setProduct(products[0]);
-                    } else {
-                        console.log('⚠️ No products loaded');
-                        
-                        // Only show alert if we are actually viewing the paywall or trying to purchase
-                        // To keep it clean, we just log and retry silently first
-                        setTimeout(async () => {
-                            try {
-                                const retryProducts = await IAP.getProducts({ skus: [PRODUCT_ID] });
-                                if (retryProducts && retryProducts.length > 0) {
-                                    setProduct(retryProducts[0]);
-                                } else {
-                                    // If even retry fails, we let the paywall's local state handle the "Please wait" 
-                                    // and the user can try to tap it which triggers another check.
-                                    console.log('⚠️ Retry also returned no products');
-                                }
-                            } catch (e) {
-                                console.log('Retry failed', e);
+                // 6. Aggressive Product Fetch
+                const fetchProduct = async () => {
+                    try {
+                        if (Platform.OS === 'ios' && IAP.getProducts) {
+                            const products = await IAP.getProducts({ skus: [PRODUCT_ID] });
+                            if (products && products.length > 0) {
+                                setProduct(products[0]);
+                                return true;
                             }
-                        }, 2000);
+                        }
+                    } catch (e) {
+                        console.log('Product fetch failed', e);
                     }
+                    return false;
+                };
+
+                const fetchSuccess = await fetchProduct();
+                if (!fetchSuccess) {
+                    console.log('⚠️ Initial fetch failed, starting background retry cycle');
+                    // Retry every 3 seconds for 3 times
+                    let attempts = 0;
+                    const interval = setInterval(async () => {
+                        attempts++;
+                        const ok = await fetchProduct();
+                        if (ok || attempts >= 3) clearInterval(interval);
+                    }, 3000);
                 }
             } catch (err) {
                 console.error('IAP Initialization Error:', err);
