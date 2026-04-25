@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { AD_CONFIG } from '../constants/Ads';
+import { useIAP } from '../contexts/IAPContext';
 
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
@@ -26,16 +27,22 @@ export const AdEventType = {
     CLOSED: 'closed',
 };
 
-// Unit IDs imported from dedicated config file
-export const AdUnits = {
-    BANNER: AD_CONFIG.BANNER_UNIT_ID,
-    INTERSTITIAL: AD_CONFIG.INTERSTITIAL_UNIT_ID,
+export const RewardedAdEventType = {
+    LOADED: 'loaded',
+    EARNED_REWARD: 'rewarded_earned_reward',
 };
 
-// Real library imports (only if NOT in Expo Go)
+// Unit IDs imported from dedicated config file
+export const AdUnits = {
+    BANNER: AD_CONFIG.BANNER_UNIT_ID || '',
+    INTERSTITIAL: AD_CONFIG.INTERSTITIAL_UNIT_ID || '',
+    REWARDED: AD_CONFIG.REWARDED_UNIT_ID || '',
+};
+
 let mobileAds: any = null;
 let BannerAd: any = null;
 let InterstitialAd: any = null;
+let RewardedAd: any = null;
 let MaxAdContentRating: any = null;
 
 if (!isExpoGo) {
@@ -44,11 +51,15 @@ if (!isExpoGo) {
         mobileAds = ads.default;
         BannerAd = ads.BannerAd;
         InterstitialAd = ads.InterstitialAd;
+        RewardedAd = ads.RewardedAd;
         MaxAdContentRating = ads.MaxAdContentRating;
 
         // Use real values if available
         Object.assign(BannerAdSize, ads.BannerAdSize);
         Object.assign(AdEventType, ads.AdEventType);
+        if (ads.RewardedAdEventType) {
+            Object.assign(RewardedAdEventType, ads.RewardedAdEventType);
+        }
     } catch (e) {
         console.warn("Google Mobile Ads library not found or native module missing.");
     }
@@ -74,6 +85,11 @@ export const initAds = async () => {
 
 // Safe Banner Component
 export const AppBannerAd = (props: any) => {
+    const { isPro } = useIAP();
+
+    if (isPro) return null;
+    if (!props.unitId) return null; // NULL CHECK FOR AD ID
+
     if (isExpoGo || !BannerAd) {
         return (
             <View style={styles.mockBannerContainer}>
@@ -92,7 +108,8 @@ export const AppBannerAd = (props: any) => {
 };
 
 // Safe Interstitial Loader
-export const createSafeInterstitial = (unitId: string) => {
+export const createSafeInterstitial = (unitId: string | null | undefined) => {
+    if (!unitId) return null; // NULL CHECK FOR AD ID
     if (isExpoGo || !InterstitialAd) {
         console.log('Interstitial Ad skipped: Not supported in Expo Go');
         return null;
@@ -103,6 +120,23 @@ export const createSafeInterstitial = (unitId: string) => {
         });
     } catch (e) {
         console.warn("Failed to create interstitial ad:", e);
+        return null;
+    }
+};
+
+// Safe Rewarded Loader
+export const createSafeRewarded = (unitId: string | null | undefined) => {
+    if (!unitId) return null; // NULL CHECK FOR AD ID
+    if (isExpoGo || !RewardedAd) {
+        console.log('Rewarded Ad skipped: Not supported in Expo Go');
+        return null;
+    }
+    try {
+        return RewardedAd.createForAdRequest(unitId, {
+            requestNonPersonalizedAdsOnly: true,
+        });
+    } catch (e) {
+        console.warn("Failed to create rewarded ad:", e);
         return null;
     }
 };

@@ -1,6 +1,6 @@
 import { Tabs, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, View, Platform, Pressable, Dimensions } from 'react-native';
+import { StyleSheet, View, Platform, Pressable, Dimensions, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePhotos } from '../../contexts/PhotoContext';
 import { useCallback, useEffect } from 'react';
@@ -9,7 +9,7 @@ import { ONBOARDING_COMPLETED_KEY } from '../onboarding';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withRepeat, withTiming } from 'react-native-reanimated';
 
 const { width: W } = Dimensions.get('window');
-const TAB_WIDTH = Math.max(10, (W - 48) / 3);
+const TAB_WIDTH = Math.max(10, (W - 48) / 2);
 
 function PulseDot() {
     const scale = useSharedValue(0.8);
@@ -42,7 +42,10 @@ function TabIcon({ name, color, focused, count, onPress, isNew }: { name: string
     return (
         <Pressable onPress={onPress} style={styles.iconWrap}>
             <Animated.View style={[styles.iconContainer, animatedStyle]}>
-                <Ionicons name={name as any} size={24} color={color} />
+                <Ionicons name={name as any} size={22} color={color} />
+                <Text style={{ fontSize: 10, fontFamily: 'DMSans_700Bold', color, marginTop: 4 }}>
+                    {name === 'home' ? 'Home' : name === 'home-outline' ? 'Home' : name === 'calendar' ? 'Calendar' : 'Bin'}
+                </Text>
                 {isNew && !focused && <PulseDot />}
                 {(count ?? 0) > 0 && (
                     <View style={styles.dot}>
@@ -80,65 +83,7 @@ export default function TabLayout() {
                 tabBarActiveTintColor: '#ff6b6b',
                 tabBarInactiveTintColor: '#9ca3af',
             }}
-            tabBar={(props) => {
-                const { state, navigation, descriptors } = props;
-
-                // Filter out screens with href: null to match our custom UI state
-                const visibleRoutes = state.routes.filter(route => {
-                    const { options } = descriptors[route.key];
-                    return (options as any).href !== null;
-                });
-
-                return (
-                    <View style={[
-                        styles.tabBarContainer, 
-                        { bottom: Math.max(insets.bottom, 20) },
-                        showIntro && { display: 'none', height: 0, opacity: 0 }
-                    ]}>
-                        <View style={styles.tabBarPill}>
-                            <Animated.View style={[styles.indicator, indicatorStyle]} />
-                            {(() => {
-                                const homeRoute = visibleRoutes.find(r => r.name === 'index');
-                                const binRoute = visibleRoutes.find(r => r.name === 'bin');
-                                
-                                return [
-                                    { route: homeRoute, index: 0, name: 'home' },
-                                    { virtual: true, name: 'calendar', index: 1 },
-                                    { route: binRoute, index: 2, name: 'trash' }
-                                ].map((item, index) => {
-                                    const isActive = item.virtual ? false : (state.index === (item.route?.name === 'index' ? 0 : 1));
-                                    const count = item.name === 'trash' ? binPhotos.length : 0;
-
-                                    const onPress = () => {
-                                        if (item.virtual) {
-                                            navigation.navigate('index');
-                                            setShowCalendar(true);
-                                            indicatorPos.value = withSpring(1 * TAB_WIDTH, { damping: 15, stiffness: 150 });
-                                        } else if (item.route) {
-                                            navigation.navigate(item.route.name);
-                                            indicatorPos.value = withSpring(item.index * TAB_WIDTH, { damping: 15, stiffness: 150 });
-                                        }
-                                    };
-
-                                    return (
-                                        <TabIcon
-                                            key={item.name}
-                                            name={item.name === 'home' ? (isActive ? 'home' : 'home-outline') : 
-                                                  item.name === 'calendar' ? 'calendar' :
-                                                  (isActive ? 'trash' : 'trash-outline')}
-                                            color={isActive ? '#ff6b6b' : '#9ca3af'}
-                                            focused={isActive}
-                                            onPress={onPress}
-                                            count={item.name === 'trash' ? binPhotos.length : 0}
-                                            isNew={item.name === 'calendar' && !calendarTutorialSeen}
-                                        />
-                                    );
-                                });
-                            })()}
-                        </View>
-                    </View>
-                );
-            }}
+            tabBar={() => null} // Removed bottom bar as per request
         >
             <Tabs.Screen name="index" />
             <Tabs.Screen name="bin" />
@@ -157,9 +102,9 @@ const styles = StyleSheet.create({
     },
     tabBarPill: {
         width: W - 48,
-        height: 64,
+        height: 72,
         backgroundColor: '#ffffff',
-        borderRadius: 32,
+        borderRadius: 36,
         flexDirection: 'row',
         elevation: 12,
         shadowColor: 'rgba(0,0,0,0.1)',
@@ -173,13 +118,13 @@ const styles = StyleSheet.create({
         top: 8,
         left: 8,
         width: Math.max(0, TAB_WIDTH - 16),
-        height: 48,
+        height: 56,
         backgroundColor: 'rgba(255,107,107,0.08)',
-        borderRadius: 24,
+        borderRadius: 28,
     },
     iconWrap: {
         flex: 1,
-        height: 64,
+        height: 72,
         alignItems: 'center',
         justifyContent: 'center',
     },

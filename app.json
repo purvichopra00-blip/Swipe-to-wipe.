@@ -3,7 +3,7 @@
     "name": "Swipe to Wipe",
     "slug": "photo-swipe",
     "scheme": "photo-swipe",
-    "version": "1.4.0",
+    "version": "1.4.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,8 +15,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.swipetowipe.photocleaner",
-      "buildNumber": "44",
+      "bundleIdentifier": "com.purvichopra.swipetowipe",
+      "buildNumber": "2",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
@@ -39,7 +39,6 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.swipetowipe.photocleaner",
-      "versionCode": 44,
       "googleServicesFile": "./google-services.json"
     },
     "web": {
@@ -58,7 +57,7 @@
       [
         "react-native-google-mobile-ads",
         {
-          "androidAppId": "ca-app-pub-4536210339227120~9591461461",
+          "androidAppId": "ca-app-pub-4536210339227120~4248958777",
           "iosAppId": "ca-app-pub-4536210339227120~6519111811",
           "skAdNetworkIdentifiers": [
             "cstr6suwn9.skadnetwork",
@@ -117,6 +116,8 @@
         }
       ],
       "expo-tracking-transparency",
+      "react-native-iap",
+      "expo-notifications",
       [
         "@sentry/react-native/expo",
         {
@@ -134,7 +135,7 @@
       }
     },
     "react-native-google-mobile-ads": {
-      "android_app_id": "ca-app-pub-4536210339227120~9591461461",
+      "android_app_id": "ca-app-pub-4536210339227120~4248958777",
       "ios_app_id": "ca-app-pub-4536210339227120~6519111811"
     }
   }

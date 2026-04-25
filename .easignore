@@ -1,0 +1,45 @@
+# EAS Build Ignore (Derived from .gitignore)
+# This file allows EAS to upload Firebase config files while keeping them hidden from Git.
+
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env
+.env*.local
+
+# Firebase secret config files
+# We COMMENT THESE OUT here so EAS can upload them during the build
+# google-services.json
+# GoogleService-Info.plist
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android

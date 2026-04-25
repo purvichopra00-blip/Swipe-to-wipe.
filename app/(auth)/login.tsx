@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+// import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
 import { usePhotos } from '../../contexts/PhotoContext';
@@ -38,7 +38,7 @@ export default function LoginScreen() {
     const { setUserToken } = usePhotos();
     
     // 1. Properly initialize the ReCaptcha Verifier ref
-    const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+    const recaptchaVerifier = useRef<any>(null);
     
     const [authMode, setAuthMode] = useState<'phone' | 'otp'>('phone');
     const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[1]); // Default India
@@ -141,7 +141,7 @@ export default function LoginScreen() {
             await AsyncStorage.setItem(AUTH_TOKEN_KEY, user.uid);
             setUserToken(user.uid);
             
-            router.replace('/permissions');
+            router.replace({ pathname: '/(tabs)', params: { showPaywall: 'true' } });
         } catch (error: any) {
             console.error("Firebase Verification Error:", error.code, error.message);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -178,15 +178,7 @@ export default function LoginScreen() {
             <View style={s.container}>
                 <LinearGradient colors={['#fff0f5', '#ffffff', '#fef1f6']} style={StyleSheet.absoluteFill} />
 
-                {/* 7. RECAPTCHA MODAL: Crucial for native verification */}
-                <FirebaseRecaptchaVerifierModal
-                    ref={recaptchaVerifier}
-                    firebaseConfig={auth.app.options}
-                    // Styling the modal for better UX
-                    title="Verification"
-                    cancelLabel="Close"
-                    attemptInvisibleVerification={true}
-                />
+                {/* FirebaseRecaptchaVerifierModal removed for SDK 54 compatibility */}
 
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -194,28 +186,31 @@ export default function LoginScreen() {
                 >
                     <Animated.View entering={FadeInDown.delay(200).duration(800)} style={s.header}>
                         <View style={s.logoCircle}>
-                            <Ionicons name="sparkles" size={40} color="#ff6b6b" />
+                            <Ionicons name="sparkles" size={38} color="#ff6b6b" />
                         </View>
-                        <Text style={s.title}>Swipe to Wipe</Text>
+                        <View style={s.titleWrap}>
+                            <Text style={s.titleDark}>Swipe to</Text>
+                            <Text style={s.titleCoral}>Wipe</Text>
+                        </View>
                         <Text style={s.subtitle}>Clean your gallery in seconds ✨</Text>
                     </Animated.View>
 
                     <Animated.View entering={FadeInDown.delay(400).duration(800)} style={s.form}>
                         {authMode === 'phone' && (
                             <View style={s.contentBlock}>
-                                <Text style={s.label}>What's your number?</Text>
+                                <Text style={s.label}>Phone Number</Text>
                                 <View style={s.inputContainer}>
                                     <Pressable
                                         style={s.countryPicker}
                                         onPress={() => setIsCountryModalVisible(true)}
                                     >
-                                        <Text style={s.countryCodeText}>{selectedCountry.flag} {selectedCountry.dialCode}</Text>
-                                        <Ionicons name="chevron-down" size={14} color="#1f2937" style={{ marginLeft: 4 }} />
+                                        <Text style={s.countryCodeText}>
+                                            {selectedCountry.name === 'India' ? 'IN' : selectedCountry.name.substring(0, 2).toUpperCase()} {selectedCountry.dialCode}
+                                        </Text>
                                     </Pressable>
-                                    <View style={s.vLine} />
                                     <TextInput
                                         style={s.input}
-                                        placeholder="00000 00000"
+                                        placeholder="98765 43210"
                                         placeholderTextColor="#9ca3af"
                                         value={phone}
                                         onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, ''))} // Native-friendly numeric input
@@ -229,7 +224,12 @@ export default function LoginScreen() {
                                     disabled={isLoading || phone.length < 5}
                                 >
                                     <LinearGradient colors={['#ff6b6b', '#ff8e53']} style={s.primaryGrad}>
-                                        {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryBtnTxt}>Send OTP</Text>}
+                                        {isLoading ? <ActivityIndicator color="#fff" /> : (
+                                            <View style={s.primaryBtnInner}>
+                                                <Text style={s.primaryBtnTxt}>Send OTP</Text>
+                                                <Ionicons name="chevron-forward" size={18} color="#fff" />
+                                            </View>
+                                        )}
                                     </LinearGradient>
                                 </Pressable>
                                 <Pressable
@@ -263,7 +263,12 @@ export default function LoginScreen() {
                                     disabled={isLoading || otp.length < 6}
                                 >
                                     <LinearGradient colors={['#ff6b6b', '#ff8e53']} style={s.primaryGrad}>
-                                        {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryBtnTxt}>Verify & Enter</Text>}
+                                        {isLoading ? <ActivityIndicator color="#fff" /> : (
+                                            <View style={s.primaryBtnInner}>
+                                                <Text style={s.primaryBtnTxt}>Verify & Enter</Text>
+                                                <Ionicons name="chevron-forward" size={18} color="#fff" />
+                                            </View>
+                                        )}
                                     </LinearGradient>
                                 </Pressable>
                                 <Pressable onPress={() => setAuthMode('phone')} style={s.backBtn}>
@@ -312,40 +317,42 @@ export default function LoginScreen() {
 const s = StyleSheet.create({
     container: { flex: 1 },
     keyboardView: { flex: 1, paddingHorizontal: 32, justifyContent: 'center' },
-    header: { alignItems: 'center', marginBottom: 50 },
+    header: { alignItems: 'center', marginBottom: 40 },
     logoCircle: {
-        width: 80, height: 80, borderRadius: 40, backgroundColor: '#fff',
-        justifyContent: 'center', alignItems: 'center', marginBottom: 20,
-        shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.1, shadowRadius: 20, elevation: 5,
+        width: 88, height: 88, borderRadius: 28, backgroundColor: '#fff',
+        justifyContent: 'center', alignItems: 'center', marginBottom: 24,
+        shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.15, shadowRadius: 24, elevation: 8,
     },
-    title: { fontSize: 36, fontFamily: 'Syne_800ExtraBold', color: '#1f2937' },
-    subtitle: { fontSize: 16, fontFamily: 'DMSans_400Regular', color: '#6b7280', marginTop: 8 },
+    titleWrap: { alignItems: 'center', marginBottom: 16 },
+    titleDark: { fontSize: 42, fontFamily: 'System', color: '#1C2B3E', lineHeight: 46, letterSpacing: -1 },
+    titleCoral: { fontSize: 42, fontFamily: 'System', color: '#ff6b6b', lineHeight: 46, letterSpacing: -1 },
+    subtitle: { fontSize: 16, fontFamily: 'System', color: '#6b7280', marginTop: 4 },
     form: { width: '100%' },
-    contentBlock: { gap: 16 },
-    label: { fontSize: 18, fontFamily: 'DMSans_700Bold', color: '#1f2937', textAlign: 'center', marginBottom: 8 },
+    contentBlock: { gap: 12 },
+    label: { fontSize: 14, fontFamily: 'System', color: '#4b5563', alignSelf: 'flex-start', marginLeft: 4, marginBottom: 4 },
     inputContainer: {
         flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff',
-        borderRadius: 20, paddingHorizontal: 20, height: 64,
-        borderWidth: 1, borderColor: '#f3f4f6',
-        shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.03, shadowRadius: 8, elevation: 2,
+        borderRadius: 20, paddingHorizontal: 20, height: 60,
+        borderWidth: 1.5, borderColor: '#ff6b6b',
+        shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1, shadowRadius: 12, elevation: 4,
     },
-    countryPicker: { flexDirection: 'row', alignItems: 'center', height: '100%' },
-    countryCodeText: { fontSize: 18, fontFamily: 'DMSans_700Bold', color: '#1f2937' },
-    vLine: { width: 1, height: 24, backgroundColor: '#f3f4f6', marginHorizontal: 12 },
-    input: { flex: 1, fontSize: 18, fontFamily: 'DMSans_700Bold', color: '#1f2937' },
-    primaryBtn: { height: 64, borderRadius: 20, overflow: 'hidden', marginTop: 8 },
+    countryPicker: { flexDirection: 'row', alignItems: 'center', height: '100%', marginRight: 12 },
+    countryCodeText: { fontSize: 16, fontFamily: 'System', color: '#1C2B3E' },
+    input: { flex: 1, fontSize: 18, fontFamily: 'System', color: '#1f2937' },
+    primaryBtn: { height: 60, borderRadius: 30, overflow: 'hidden', marginTop: 16 },
     primaryGrad: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    primaryBtnTxt: { fontSize: 18, fontFamily: 'DMSans_700Bold', color: '#fff' },
+    primaryBtnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    primaryBtnTxt: { fontSize: 18, fontFamily: 'System', color: '#fff' },
     disabledBtn: { opacity: 0.5 },
-    guestBtn: { height: 64, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-    guestBtnTxt: { fontSize: 16, fontFamily: 'DMSans_700Bold', color: '#6b7280' },
+    guestBtn: { height: 60, borderRadius: 30, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginTop: -4, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 2 },
+    guestBtnTxt: { fontSize: 16, fontFamily: 'System', color: '#4b5563' },
     backBtn: { alignSelf: 'center', marginTop: 8 },
-    backBtnTxt: { fontSize: 14, fontFamily: 'DMSans_700Bold', color: '#ff6b6b' },
+    backBtnTxt: { fontSize: 14, fontFamily: 'System', color: '#ff6b6b' },
     footer: { marginTop: 40, alignItems: 'center' },
-    termsTxt: { fontSize: 13, fontFamily: 'DMSans_400Regular', color: '#9ca3af', textAlign: 'center', lineHeight: 20 },
-    link: { color: '#ff6b6b', fontFamily: 'DMSans_700Bold' },
+    termsTxt: { fontSize: 13, fontFamily: 'System', color: '#9ca3af', textAlign: 'center', lineHeight: 20 },
+    link: { color: '#ff6b6b', fontFamily: 'System' },
     modalOverlay: {
         flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'flex-end',
@@ -358,13 +365,13 @@ const s = StyleSheet.create({
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
         marginBottom: 24, paddingHorizontal: 8,
     },
-    modalTitle: { fontSize: 24, fontFamily: 'Syne_700Bold', color: '#1f2937' },
+    modalTitle: { fontSize: 24, fontFamily: 'System', color: '#1f2937' },
     closeBtn: { padding: 4 },
     countryItem: {
         flexDirection: 'row', alignItems: 'center', paddingVertical: 16,
         borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingHorizontal: 8,
     },
     countryFlag: { fontSize: 24, marginRight: 16 },
-    countryName: { flex: 1, fontSize: 17, fontFamily: 'DMSans_500Medium', color: '#1f2937' },
-    countryDialCode: { fontSize: 17, fontFamily: 'DMSans_700Bold', color: '#6b7280' },
+    countryName: { flex: 1, fontSize: 17, fontFamily: 'System', color: '#1f2937' },
+    countryDialCode: { fontSize: 17, fontFamily: 'System', color: '#6b7280' },
 });

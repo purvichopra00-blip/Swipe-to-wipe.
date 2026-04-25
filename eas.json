@@ -9,7 +9,15 @@
       "distribution": "internal",
       "env": {
         "RCT_NEW_ARCH_ENABLED": "1",
-        "USE_NEW_ARCHITECTURE": "1"
+        "USE_NEW_ARCHITECTURE": "1",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyArGe4B5oP3c3sSO6GzZejJu13cwUlLQoM",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "swipe-to-wipe.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "swipe-to-wipe",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "swipe-to-wipe.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "175347456697",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:175347456697:ios:d77d8018b8358a8e6c1968",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-QD6DNG6V0Y",
+        "EXPO_PUBLIC_AMPLITUDE_API_KEY": "587cd09bda71f1d0ffac00aad79c8fd1"
       }
     },
     "preview": {
@@ -18,20 +26,26 @@
     "production": {
       "distribution": "store",
       "autoIncrement": true,
-      "android": {
-        "googleServicesFile": "./google-services.json"
-      },
       "env": {
         "RCT_NEW_ARCH_ENABLED": "1",
         "USE_NEW_ARCHITECTURE": "1",
-        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyArGe4B5oP3c3sSO6GzZejJu13cwUlLQoM",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "swipe-to-wipe.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "swipe-to-wipe",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "swipe-to-wipe.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "175347456697",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:175347456697:ios:d77d8018b8358a8e6c1968",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-QD6DNG6V0Y",
+        "EXPO_PUBLIC_AMPLITUDE_API_KEY": "587cd09bda71f1d0ffac00aad79c8fd1"
       }
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "ascAppId": "6761011430"
+        "ascAppId": "6761011430",
+        "appleTeamId": "V9922TC8U9"
       }
     }
   }

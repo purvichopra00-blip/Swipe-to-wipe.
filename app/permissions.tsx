@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { StyleSheet, View, Text, Pressable, ActivityIndicator, Alert, StatusBar } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,40 +39,38 @@ export default function PermissionsScreen() {
 
     return (
         <View style={s.container}>
-            <LinearGradient colors={['#fff0f5', '#ffffff']} style={StyleSheet.absoluteFill} />
-
+            <StatusBar barStyle="dark-content" />
             <View style={s.content}>
-                <Animated.View entering={FadeInDown.delay(200).duration(800)} style={s.iconCircle}>
-                    <Ionicons name="images" size={50} color="#ff6b6b" />
-                </Animated.View>
-
-                <Animated.View entering={FadeInDown.delay(400).duration(800)} style={s.textContainer}>
-                    <Text style={s.title}>One last step! 📸</Text>
+                <Animated.View entering={FadeInDown.delay(200).duration(800)} style={s.header}>
+                    <View style={s.iconCircle}>
+                        <Ionicons name="images" size={44} color="#FF6B6B" />
+                    </View>
+                    <Text style={s.title}>Let’s clean your gallery</Text>
                     <Text style={s.description}>
-                        To start cleaning your gallery, we need your permission to view and organize your photos.
-                        Your privacy is our priority—we only see what you swipe.
+                        We need access to show your photos.
                     </Text>
                 </Animated.View>
 
+                <Animated.View entering={FadeInDown.delay(400).duration(800)} style={s.trustBadge}>
+                    <Ionicons name="shield-checkmark" size={16} color="#22C55E" />
+                    <Text style={s.trustText}>Processed on your device</Text>
+                </Animated.View>
+
                 <Animated.View entering={FadeInUp.delay(600).duration(800)} style={s.footer}>
-                    <Pressable style={s.button} onPress={handleGrant} disabled={isLoading}>
-                        <LinearGradient
-                            colors={['#ff6b6b', '#ff8e53']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                            style={s.buttonGrad}
-                        >
-                            {isLoading ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <>
-                                    <Text style={s.buttonTxt}>Allow Access</Text>
-                                    <Ionicons name="arrow-forward" size={20} color="#fff" />
-                                </>
-                            )}
-                        </LinearGradient>
+                    <Pressable 
+                        style={({ pressed }) => [
+                            s.button, 
+                            pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] }
+                        ]} 
+                        onPress={handleGrant} 
+                        disabled={isLoading}
+                    >
+                        {isLoading ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={s.buttonTxt}>Allow Access →</Text>
+                        )}
                     </Pressable>
-                    <Text style={s.hint}>You can change this anytime in system settings.</Text>
                 </Animated.View>
             </View>
         </View>
@@ -80,21 +78,65 @@ export default function PermissionsScreen() {
 }
 
 const s = StyleSheet.create({
-    container: { flex: 1 },
-    content: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+    container: { flex: 1, backgroundColor: '#FAFAFA' },
+    content: { flex: 1, paddingHorizontal: 40, justifyContent: 'center', alignItems: 'center' },
+    header: { alignItems: 'center', marginBottom: 40 },
     iconCircle: {
         width: 100, height: 100, borderRadius: 50,
-        backgroundColor: '#fff',
+        backgroundColor: '#FFF1F1',
         justifyContent: 'center', alignItems: 'center',
         marginBottom: 32,
-        shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 5,
     },
-    textContainer: { alignItems: 'center' },
-    title: { fontSize: 32, fontFamily: 'Syne_800ExtraBold', color: '#1f2937', textAlign: 'center', marginBottom: 16 },
-    description: { fontSize: 16, fontFamily: 'DMSans_500Medium', color: '#6b7280', textAlign: 'center', lineHeight: 26 },
-    footer: { width: '100%', marginTop: 60, alignItems: 'center' },
-    button: { width: '100%', borderRadius: 100, overflow: 'hidden', shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 16, elevation: 8 },
-    buttonGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 12 },
-    buttonTxt: { fontSize: 18, fontFamily: 'DMSans_700Bold', color: '#fff' },
-    hint: { fontSize: 13, fontFamily: 'DMSans_500Medium', color: '#9ca3af', marginTop: 16 },
+    title: { 
+        fontSize: 34, 
+        fontFamily: 'System', 
+        color: '#1C1C1E', 
+        fontWeight: '800', 
+        textAlign: 'center', 
+        marginBottom: 12,
+        letterSpacing: -1,
+    },
+    description: { 
+        fontSize: 18, 
+        fontFamily: 'DMSans_400Regular', 
+        color: '#6B7280', 
+        textAlign: 'center', 
+        lineHeight: 24,
+        fontWeight: '500',
+    },
+    trustBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F3F4F6',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 100,
+        gap: 8,
+        marginBottom: 60,
+    },
+    trustText: {
+        fontSize: 13,
+        color: '#4B5563',
+        fontWeight: '600',
+    },
+    footer: { width: '100%', alignItems: 'center' },
+    button: { 
+        width: '100%', 
+        backgroundColor: '#FF6B6B',
+        borderRadius: 18, 
+        paddingVertical: 20, 
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#FF6B6B',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.25,
+        shadowRadius: 16,
+        elevation: 8,
+    },
+    buttonTxt: { 
+        fontSize: 18, 
+        fontFamily: 'DMSans_700Bold', 
+        color: '#FFFFFF', 
+        fontWeight: '700',
+    },
 });

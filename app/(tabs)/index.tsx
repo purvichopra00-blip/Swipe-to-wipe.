@@ -7,7 +7,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ConfettiCannon from 'react-native-confetti-cannon';
@@ -21,17 +21,21 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import * as FileSystem from 'expo-file-system';
+import { Paths, File, Directory } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Clipboard from 'expo-clipboard';
+import Constants from 'expo-constants';
 import { usePhotos, SortMode, DateFilter } from '../../contexts/PhotoContext';
 import SwipeCard from '../../components/SwipeCard';
 import { AppBannerAd, BannerAdSize, AdUnits, createSafeInterstitial, AdEventType } from '../../lib/ads';
 import { AD_CONFIG } from '../../constants/Ads';
+import { useIAP } from '../../contexts/IAPContext';
+import Paywall from '../../components/Paywall';
+
 
 const { width: W, height: H } = Dimensions.get('window');
-const SWIPE_THRESHOLD = W * 0.28;
+const SWIPE_THRESHOLD = W * 0.22;
 const VISIBLE_CARDS = 3;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
@@ -39,9 +43,9 @@ const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 function CountUp({ to, duration = 3000, style, delay = 0 }: { to: number; duration?: number; style?: any; delay?: number }) {
     const count = useSharedValue(0);
     useEffect(() => {
-        count.value = withDelay(delay, withTiming(to, { 
-            duration, 
-            easing: Easing.out(Easing.exp) 
+        count.value = withDelay(delay, withTiming(to, {
+            duration,
+            easing: Easing.out(Easing.exp)
         }));
     }, [to, delay, duration]);
 
@@ -58,7 +62,7 @@ function CountUp({ to, duration = 3000, style, delay = 0 }: { to: number; durati
             defaultValue="0"
             scrollEnabled={false}
             style={[
-                style, 
+                style,
                 { padding: 0, margin: 0, textAlign: 'center', minWidth: 160, height: 44 }
             ]}
             animatedProps={animatedProps}
@@ -84,6 +88,160 @@ function ScalePress({ children, onPress, style, disabled }: { children: React.Re
         </AnimatedPressable>
     );
 }
+
+// Continuous gentle pulse animation for the main CTA button
+function CtaPulse({ children }: { children: React.ReactNode }) {
+    const scale = useSharedValue(1);
+    React.useEffect(() => {
+        scale.value = withRepeat(
+            withSequence(
+                withTiming(1.04, { duration: 900, easing: Easing.inOut(Easing.ease) }),
+                withTiming(1.0,  { duration: 900, easing: Easing.inOut(Easing.ease) })
+            ),
+            -1,
+            true
+        );
+    }, []);
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: scale.value }]
+    }));
+    return <Animated.View style={[{ alignSelf: 'stretch' }, animatedStyle]}>{children}</Animated.View>;
+}
+
+const RollModal = ({ visible, onClose }: { visible: boolean; onClose: () => void }) => (
+    <Modal visible={visible} transparent animationType="fade">
+        <View style={s.modalOverlay}>
+            <Animated.View entering={FadeInDown} style={s.rollCard}>
+                <Text style={s.rollEmoji}>🔥</Text>
+                <Text style={s.rollTitle}>You’re on a roll</Text>
+                <Text style={s.rollSub}>50 free swipes daily. Go Pro for unlimited.</Text>
+                <ScalePress style={s.rollBtn} onPress={onClose}>
+                    <Text style={s.rollBtnText}>Keep Going →</Text>
+                </ScalePress>
+            </Animated.View>
+        </View>
+    </Modal>
+);
+
+const SettingsModal = ({
+    visible,
+    onClose,
+    isPro,
+    onUpgrade,
+    onSignOut,
+    onDeleteAccount,
+    totalClearedBytes,
+    totalDeletedPhotos,
+    fmt,
+    onResetSwipes
+}: {
+    visible: boolean;
+    onClose: () => void;
+    isPro: boolean;
+    onUpgrade: () => void;
+    onSignOut: () => void;
+    onDeleteAccount: () => void;
+    totalClearedBytes: number;
+    totalDeletedPhotos: number;
+    fmt: (b: number) => string;
+    onResetSwipes?: () => void;
+}) => (
+    <Modal
+        visible={visible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={onClose}
+    >
+        <Pressable
+            style={s.settingsOverlay}
+            onPress={onClose}
+        >
+            <Animated.View
+                entering={FadeInDown.duration(300).springify()}
+                style={s.settingsContent}
+            >
+                <View style={s.settingsHeader}>
+                    <Text style={s.settingsTitle}>Settings</Text>
+                    <Pressable onPress={onClose} style={s.settingsClose}>
+                        <Ionicons name="close" size={20} color="#6B7280" />
+                    </Pressable>
+                </View>
+
+                {/* Lifetime Impact Stats */}
+                <View style={s.settingsStatsBox}>
+                    <View style={s.settingsStatItem}>
+                        <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(52,199,89,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                            <Ionicons name="cloud-done-outline" size={18} color="#34C759" />
+                        </View>
+                        <Text style={s.settingsStatVal}>{fmt(totalClearedBytes)}</Text>
+                        <Text style={s.settingsStatLbl}>Storage Freed</Text>
+                    </View>
+                    <View style={{ width: 1, height: 40, backgroundColor: '#EDEDED' }} />
+                    <View style={s.settingsStatItem}>
+                        <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,107,107,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                            <Ionicons name="trash-outline" size={18} color="#FF6B6B" />
+                        </View>
+                        <Text style={s.settingsStatVal}>{totalDeletedPhotos.toLocaleString()}</Text>
+                        <Text style={s.settingsStatLbl}>Items Deleted</Text>
+                    </View>
+                </View>
+
+                <View style={s.settingsList}>
+                    {!isPro ? (
+                        <ScalePress
+                            style={[s.settingsOption, { backgroundColor: '#FFF5F5', borderColor: '#FFE4E4' }]}
+                            onPress={() => {
+                                onClose();
+                                onUpgrade();
+                            }}
+                        >
+                            <View style={[s.settingsIconWrap, { backgroundColor: '#FF6B6B' }]}>
+                                <Ionicons name="sparkles" size={20} color="#FFFFFF" />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[s.settingsOptionTxt, { fontWeight: '700' }]}>Upgrade to Pro</Text>
+                                <Text style={{ fontSize: 12, color: '#FF6B6B', marginTop: 1 }}>Unlock unlimited swipes</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={18} color="#FF6B6B" />
+                        </ScalePress>
+                    ) : (
+                        <ScalePress
+                            style={s.settingsOption}
+                            onPress={() => {
+                                onClose();
+                                onSignOut();
+                            }}
+                        >
+                            <View style={[s.settingsIconWrap, { backgroundColor: '#F3F4F6' }]}>
+                                <Ionicons name="log-out-outline" size={20} color="#4B5563" />
+                            </View>
+                            <Text style={s.settingsOptionTxt}>Sign Out</Text>
+                            <Ionicons name="chevron-forward" size={18} color="#A1A1AA" />
+                        </ScalePress>
+                    )}
+
+                    <ScalePress
+                        style={s.settingsOption}
+                        onPress={() => {
+                            onClose();
+                            onDeleteAccount();
+                        }}
+                    >
+                        <View style={[s.settingsIconWrap, { backgroundColor: '#FEF2F2' }]}>
+                            <Ionicons name="trash-bin-outline" size={20} color="#EF4444" />
+                        </View>
+                        <Text style={[s.settingsOptionTxt, { color: '#EF4444' }]}>Delete Account</Text>
+                        <Ionicons name="chevron-forward" size={18} color="#FECACA" />
+                    </ScalePress>
+                </View>
+
+                <View style={{ marginTop: 16, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, color: '#D1D5DB', fontWeight: '500' }}>Version {Constants.expoConfig?.version ?? '1.4.1'}</Text>
+                </View>
+            </Animated.View>
+        </Pressable>
+    </Modal>
+);
 
 
 function FadeSlideIn({ children, delay = 0, style }: any) {
@@ -115,10 +273,25 @@ export default function SwipeScreen() {
         isLoadingSession, startSwipingSession, loadCategoryStats,
         sortMode, setSortMode, endSession, permissionsGranted,
         categoryCounts, totalClearedBytes, totalDeletedPhotos, totalKeptPhotos, totalBinnedPhotos,
+        streak, weeklySwipes,
         showIntro, setShowIntro,
         dateFilter, setDateFilter,
-        showCalendar, setShowCalendar
+        showCalendar, setShowCalendar,
+        isGuest, setUserToken, deepReset
     } = usePhotos();
+
+    const fmt = (b: number) => {
+        if (!b) return '0 B';
+        if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+        if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+        return `${(b / 1024 ** 3).toFixed(2)} GB`;
+    };
+
+
+    const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+    const [swipesThisSession, setSwipesThisSession] = useState(0);
+    const [showRollModal, setShowRollModal] = useState(false);
+
 
     const insets = useSafeAreaInsets();
     const router = useRouter();
@@ -128,6 +301,47 @@ export default function SwipeScreen() {
     const translateY = useSharedValue(0);
 
     const logoScale = useSharedValue(1);
+
+    const [calViewDate, setCalViewDate] = useState(new Date());
+    const [calSelectedDay, setCalSelectedDay] = useState<number | null>(new Date().getDate());
+    const [calMonthStats, setCalMonthStats] = useState({ photos: 0, distinctDays: new Set<number>() });
+
+    useEffect(() => {
+        if (!showCalendar) return;
+        let active = true;
+        const year = calViewDate.getFullYear();
+        const month = calViewDate.getMonth();
+
+        MediaLibrary.getAssetsAsync({
+            createdAfter: new Date(year, month, 1).getTime(),
+            createdBefore: new Date(year, month + 1, 1).getTime(),
+            first: 500,
+        }).then(result => {
+            if (!active) return;
+            const uniqueDays = new Set<number>();
+            result.assets.forEach(a => {
+                uniqueDays.add(new Date(a.creationTime).getDate());
+            });
+            setCalMonthStats({ photos: result.totalCount || 0, distinctDays: uniqueDays });
+
+            setCalSelectedDay(prev => {
+                const today = new Date();
+                const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+                if (isCurrentMonth) return today.getDate();
+                if (uniqueDays.size > 0 && (!prev || !uniqueDays.has(prev))) {
+                    return Math.max(...Array.from(uniqueDays));
+                }
+                return prev || 1;
+            });
+        }).catch(() => { });
+        return () => { active = false; };
+    }, [showCalendar, calViewDate]);
+
+    const navMonth = (delta: number) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setCalViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+    };
+
     useEffect(() => {
         logoScale.value = withRepeat(
             withSequence(
@@ -143,14 +357,21 @@ export default function SwipeScreen() {
         transform: [{ scale: logoScale.value }]
     }));
     const [showSort, setShowSort] = useState(false);
-    const [showInfo, setShowInfo] = useState(false);
-    const [isCalculatingInfo, setIsCalculatingInfo] = useState(false);
-    const [detailedInfo, setDetailedInfo] = useState<{ size: number; width: number; height: number }>({ size: 0, width: 0, height: 0 });
     const [isSharing, setIsSharing] = useState(false);
     const sortProgress = useSharedValue(0);
     const dateProgress = useSharedValue(0);
     const { calendarTutorialSeen, setCalendarTutorialSeen } = usePhotos();
+    const [isPickerMode, setIsPickerMode] = useState(false);
     const [localCalTutVisible, setLocalCalTutVisible] = useState(false);
+    const years = Array.from({ length: 16 }, (_, i) => new Date().getFullYear() - i);
+    const months = ['Jan ❄️', 'Feb 💌', 'Mar 🍀', 'Apr 🌸', 'May 🌿', 'Jun ☀️', 'Jul 🍦', 'Aug 🌊', 'Sep 🍂', 'Oct 🎃', 'Nov 🧣', 'Dec 🎄'];
+
+    const selectYearMonth = (year: number, month?: number) => {
+        const newDate = new Date(year, month ?? calViewDate.getMonth(), 1);
+        setCalViewDate(newDate);
+        setIsPickerMode(false);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    };
 
     useEffect(() => {
         if (showCalendar && !calendarTutorialSeen) {
@@ -182,10 +403,65 @@ export default function SwipeScreen() {
     const [adsShownThisSession, setAdsShownThisSession] = useState(0);
     const [interstitial, setInterstitial] = useState<any>(null);
     const [adLoaded, setAdLoaded] = useState(false);
+    const { isPro, canSwipe, trackSwipe, photoCount, videoCount, resetDailyLimits, photoSwipesRemaining } = useIAP();
+
+    // Tester Monitor: Track swipe counts in real-time
+    useEffect(() => {
+        console.log(`[TESTER] Photo Swipes: ${photoCount}, Video Swipes: ${videoCount}, Total: ${(photoCount || 0) + (videoCount || 0)}`);
+    }, [photoCount, videoCount]);
+
+    const [paywallVisible, setPaywallVisible] = useState(false);
+    const [paywallReason, setPaywallReason] = useState<'limit' | 'ad' | 'upgrade'>('limit');
 
     const [showFullPreview, setShowFullPreview] = useState(false);
 
+    const handleSignOut = async () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        setShowIntro(true);
+        endSession();
+        await AsyncStorage.removeItem('@auth_token_v1');
+        router.replace('/login');
+    };
+
+    const handleDeleteAccount = async () => {
+        Alert.alert(
+            'Delete Account Permanently?',
+            'This will permanently delete your account, saved preferences, and all app data. This action cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete Permanently',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await deepReset();
+                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                            router.replace('/login');
+                        } catch (err: any) {
+                            console.error('Delete account error', err);
+                            Alert.alert('Error', 'Failed to delete account. Please try again.');
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const params = useLocalSearchParams();
+
     useEffect(() => {
+        if (params?.showPaywall === 'true') {
+            setPaywallReason('limit');
+            setPaywallVisible(true);
+            router.setParams({ showPaywall: undefined });
+        }
+    }, [params?.showPaywall]);
+
+    useEffect(() => {
+        if (isPro) {
+            setAdLoaded(false);
+            return;
+        }
         const ad = createSafeInterstitial(AdUnits.INTERSTITIAL);
         if (ad) {
             const unsubscribeLoaded = ad.addAdEventListener(AdEventType.LOADED, () => setAdLoaded(true));
@@ -204,8 +480,17 @@ export default function SwipeScreen() {
     }, []);
 
     const showAd = useCallback(() => {
+        if (isPro) return; // Never show ads for Pro
         if (adLoaded && interstitial) {
             interstitial.show();
+            // Paywall logic: After first ad shows and after every 2nd ad
+            const schedule = [1, 3, 5, 7, 9, 11, 13, 15]; // Ad count indices that trigger paywall
+            if (schedule.includes(adsShownThisSession + 1)) {
+                setTimeout(() => {
+                    setPaywallReason('ad');
+                    setPaywallVisible(true);
+                }, 1000); // Small delay after ad closes
+            }
         } else {
             // If ad wasn't loaded by the time we hit the trigger, try loading it again.
             if (interstitial && !adLoaded) {
@@ -213,7 +498,7 @@ export default function SwipeScreen() {
             }
             setAdTriggerCounter(0); // Reset if ad failed
         }
-    }, [adLoaded, interstitial]);
+    }, [adLoaded, interstitial, isPro, adsShownThisSession]);
     const celebScale = useRef(new RNAnimated.Value(0.8)).current;
     const celebOpacity = useRef(new RNAnimated.Value(0)).current;
     const orbitSpin = useRef(new RNAnimated.Value(0)).current;
@@ -255,7 +540,6 @@ export default function SwipeScreen() {
 
     // Auto transition REMOVED as per user request - User must tap manually.
 
-    const fmt = (b: number) => b > 1024 ** 2 * 900 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${(b / 1024 ** 2).toFixed(1)} MB`;
 
     // Greeter removed (using global helper)
 
@@ -270,11 +554,13 @@ export default function SwipeScreen() {
 
     // Start orbit animation loop
     useEffect(() => {
-        RNAnimated.loop(
+        const anim = RNAnimated.loop(
             RNAnimated.timing(orbitSpin, {
                 toValue: 1, duration: 4000, easing: Easing.linear as any, useNativeDriver: true
             })
-        ).start();
+        );
+        anim.start();
+        return () => anim.stop();
     }, []);
 
     // Smart Celebration Trigger
@@ -312,45 +598,16 @@ export default function SwipeScreen() {
     }, []);
 
     const handleBack = useCallback(() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         endSession();
-    }, [endSession]);
+        setDateFilter(null);
+        setShowIntro(true);
+    }, [endSession, setDateFilter, setShowIntro]);
 
     const openSort = () => {
         setShowSort(true);
         sortProgress.value = withSpring(1, { damping: 15, stiffness: 150 });
     };
-    const openInfo = useCallback(async () => {
-        if (!currentPhoto) return;
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        setShowInfo(true);
-        setIsCalculatingInfo(true);
-
-        // Use the metadata ALREADY present in the photo object 
-        // to avoid buggy and crashing MediaLibrary calls.
-        setDetailedInfo({
-            size: currentPhoto.fileSize || 0,
-            width: currentPhoto.width || 0,
-            height: currentPhoto.height || 0
-        });
-
-        try {
-            // Optional: only fetch high-precision info if it's missing (rare)
-            if (!currentPhoto.fileSize) {
-                const info = await MediaLibrary.getAssetInfoAsync(currentPhoto.id, { shouldDownloadFromNetwork: false });
-                const newSize = (info as any).fileSize || (info as any).size || 0;
-                setDetailedInfo(prev => ({
-                    ...prev,
-                    size: newSize || prev.size,
-                    width: info.width || prev.width,
-                    height: info.height || prev.height
-                }));
-            }
-        } catch (error) {
-            console.warn("Non-critical info fetch failed:", error);
-        } finally {
-            setIsCalculatingInfo(false);
-        }
-    }, [currentPhoto]);
     const closeSort = () => {
         sortProgress.value = withTiming(0, { duration: 250 }, () => runOnJS(setShowSort)(false));
     };
@@ -372,7 +629,7 @@ export default function SwipeScreen() {
         const newFilter = year ? { year, month, day } : null;
         setDateFilter(newFilter);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        
+
         if (autoJump || !year) {
             closeDatePicker();
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -386,26 +643,26 @@ export default function SwipeScreen() {
         startSwipingSession('Random', dateFilter);
     };
 
-     const dateDragY = useSharedValue(0);
-     const dateSheetStyle = useAnimatedStyle(() => ({
-         opacity: withTiming(dateProgress.value > 0 ? 1 : 0, { duration: 150 }),
-         transform: [{ 
-             translateY: interpolate(dateProgress.value, [0, 1], [H * 0.8, 0], Extrapolation.CLAMP) + dateDragY.value 
-         }]
-     }));
+    const dateDragY = useSharedValue(0);
+    const dateSheetStyle = useAnimatedStyle(() => ({
+        opacity: withTiming(dateProgress.value > 0 ? 1 : 0, { duration: 150 }),
+        transform: [{
+            translateY: interpolate(dateProgress.value, [0, 1], [H * 0.8, 0], Extrapolation.CLAMP) + dateDragY.value
+        }]
+    }));
 
-     const datePanGesture = Gesture.Pan()
-         .onUpdate((e) => {
-             if (e.translationY > 0) dateDragY.value = e.translationY;
-         })
-         .onEnd((e) => {
-             if (e.translationY > 120 || e.velocityY > 600) {
-                 runOnJS(closeDatePicker)();
-                 dateDragY.value = withTiming(H);
-             } else {
-                 dateDragY.value = withSpring(0);
-             }
-         });
+    const datePanGesture = Gesture.Pan()
+        .onUpdate((e) => {
+            if (e.translationY > 0) dateDragY.value = e.translationY;
+        })
+        .onEnd((e) => {
+            if (e.translationY > 120 || e.velocityY > 600) {
+                runOnJS(closeDatePicker)();
+                dateDragY.value = withTiming(H);
+            } else {
+                dateDragY.value = withSpring(0);
+            }
+        });
 
     useEffect(() => {
         if (showCalendar) {
@@ -414,21 +671,21 @@ export default function SwipeScreen() {
     }, [showCalendar]);
 
     const getProTip = () => {
-         const total = categoryCounts.total || 1;
-         // If videos make up more than 20% of the gallery
-         if (categoryCounts.videos > total * 0.2) {
-             return {
-                 text: "Videos take up 100x more space than photos! Start there to free up GBs fast.",
-                 action: () => { closeDatePicker(); startSwipingSession('Videos', null); }
-             };
-         }
-         const lastYear = new Date().getFullYear() - 1;
-         return {
-             text: `${lastYear} usually has the most hidden clutter — clean it first!`,
-             action: () => selectDate(lastYear, undefined, undefined, true)
-         };
-     };
-     const currentProTip = getProTip();
+        const total = categoryCounts.total || 1;
+        // If videos make up more than 20% of the gallery
+        if (categoryCounts.videos > total * 0.2) {
+            return {
+                text: "Videos take up 100x more space than photos! Start there to free up GBs fast.",
+                action: () => { closeDatePicker(); startSwipingSession('Videos', null); }
+            };
+        }
+        const lastYear = new Date().getFullYear() - 1;
+        return {
+            text: `${lastYear} usually has the most hidden clutter - clean it first!`,
+            action: () => selectDate(lastYear, undefined, undefined, true)
+        };
+    };
+    const currentProTip = getProTip();
 
     // Swipe Tutorial Logic (Progressive Disclosure)
     const TUTORIAL_SEEN_KEY = '@swipe_tutorial_v10';
@@ -441,13 +698,16 @@ export default function SwipeScreen() {
     });
 
     useEffect(() => {
+        let active = true;
         if (showFullPreview && currentPhoto?.mediaType === 'video') {
-            MediaLibrary.getAssetInfoAsync(currentPhoto.id).then(info => {
-                setPreviewVideoUri(info.localUri || info.uri);
-            });
+            const photoId = currentPhoto.id;
+            MediaLibrary.getAssetInfoAsync(photoId).then(info => {
+                if (active) setPreviewVideoUri(info.localUri || info.uri);
+            }).catch(() => { });
         } else {
             setPreviewVideoUri(null);
         }
+        return () => { active = false; };
     }, [showFullPreview, currentPhoto]);
     const tutorialStepRef = useRef<0 | 1 | 2 | 3>(0);
     const isTutorialActive = useSharedValue(false);
@@ -515,6 +775,15 @@ export default function SwipeScreen() {
     }));
 
     const handleSwipeRight = useCallback(() => {
+        if (!canSwipe(currentPhoto?.mediaType || 'photo')) {
+            setPaywallReason('limit');
+            setPaywallVisible(true);
+            // Re-center the card
+            translateX.value = withSpring(0);
+            translateY.value = withSpring(0);
+            return;
+        }
+
         if (tutorialStepRef.current === 1) {
             setTutorialStep(2); // Ghost hands disappear, wait quietly for left swipe
             AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '2');
@@ -524,12 +793,19 @@ export default function SwipeScreen() {
         cancelAnimation(translateY);
         translateX.value = 0; // Reset FIRST to prevent new card from appearing off-screen
         translateY.value = 0;
+
+        trackSwipe(currentPhoto?.mediaType || 'photo');
+        setSwipesThisSession(prev => {
+            const next = prev + 1;
+            if (next === 10) runOnJS(setShowRollModal)(true);
+            return next;
+        });
+
         swipeRight();
         setAdTriggerCounter(prev => {
             const next = prev + 1;
-            const schedule = AD_CONFIG.INTERSTITIAL_PROGRESSIVE_SCHEDULE;
-            const target = schedule[adsShownThisSession] || AD_CONFIG.INTERSTITIAL_MIN_INTERVAL;
-            
+            const target = 25; // Trigger at exactly 25 swipes
+
             if (next >= target) {
                 showAd();
                 setAdsShownThisSession(s => s + 1);
@@ -537,9 +813,18 @@ export default function SwipeScreen() {
             }
             return next;
         });
-    }, [swipeRight, translateX, showAd]);
+    }, [swipeRight, translateX, showAd, canSwipe, trackSwipe, currentPhoto, adsShownThisSession]);
 
     const handleSwipeLeft = useCallback(() => {
+        if (!canSwipe(currentPhoto?.mediaType || 'photo')) {
+            setPaywallReason('limit');
+            setPaywallVisible(true);
+            // Re-center the card
+            translateX.value = withSpring(0);
+            translateY.value = withSpring(0);
+            return;
+        }
+
         if (tutorialStepRef.current === 1 || tutorialStepRef.current === 2) {
             setTutorialStep(3); // Trigger Safe in Bin overlay
             AsyncStorage.setItem(TUTORIAL_SEEN_KEY, '3');
@@ -550,11 +835,18 @@ export default function SwipeScreen() {
         cancelAnimation(translateY);
         translateX.value = 0; // Reset FIRST
         translateY.value = 0;
+
+        trackSwipe(currentPhoto?.mediaType || 'photo');
+        setSwipesThisSession(prev => {
+            const next = prev + 1;
+            if (next === 10) runOnJS(setShowRollModal)(true);
+            return next;
+        });
+
         swipeLeft();
         setAdTriggerCounter(prev => {
             const next = prev + 1;
-            const schedule = AD_CONFIG.INTERSTITIAL_PROGRESSIVE_SCHEDULE;
-            const target = schedule[adsShownThisSession] || AD_CONFIG.INTERSTITIAL_MIN_INTERVAL;
+            const target = 25; // Trigger at exactly 25 swipes
 
             if (next >= target) {
                 showAd();
@@ -563,7 +855,7 @@ export default function SwipeScreen() {
             }
             return next;
         });
-    }, [swipeLeft, translateX, playDeleteSound, showAd]);
+    }, [swipeLeft, translateX, playDeleteSound, showAd, canSwipe, trackSwipe, currentPhoto, adsShownThisSession]);
 
     const panGesture = Gesture.Pan()
         .activeOffsetX([-10, 10]) // Prevent jitter on vertical scroll
@@ -604,10 +896,10 @@ export default function SwipeScreen() {
             } else {
                 // Snap back with a nice bouncy spring
                 translateX.value = withSpring(0, {
-                    damping: 18, stiffness: 180, mass: 0.8, velocity: e.velocityX
+                    damping: 14, stiffness: 220, mass: 0.7, velocity: e.velocityX
                 });
                 translateY.value = withSpring(0, {
-                    damping: 18, stiffness: 180, mass: 0.8, velocity: e.velocityY
+                    damping: 14, stiffness: 220, mass: 0.7, velocity: e.velocityY
                 });
             }
         });
@@ -639,8 +931,8 @@ export default function SwipeScreen() {
             if (idx >= photos.length) continue;
             cards.push(
                 <SwipeCard key={photos[idx].id} photo={photos[idx]} index={i}
-                    totalVisible={VISIBLE_CARDS} translateX={translateX} translateY={translateY} 
-                    isTop={i === 0} hasFilter={!!dateFilter} />
+                    totalVisible={VISIBLE_CARDS} translateX={translateX} translateY={translateY}
+                    isTop={i === 0} hasFilter={!!dateFilter} onExpand={() => setShowFullPreview(true)} />
             );
         }
         return cards;
@@ -648,154 +940,237 @@ export default function SwipeScreen() {
 
     const sortLabel = sortMode === 'newest' ? 'Newest' : sortMode === 'oldest' ? 'Oldest' : 'Largest';
 
-    /* ΓöÇΓöÇ INTRO SCREEN (early return) ΓöÇΓöÇ */
-    if (showIntro) {
-        return (
-            <View style={s.container}>
-                <StatusBar barStyle="dark-content" />
-                <LinearGradient colors={['#fff0f5', '#ffffff', '#fef1f6']} style={StyleSheet.absoluteFill} />
-                
-                <View style={[s.introOverlay, { paddingTop: Math.max(insets.top, 84), paddingBottom: Math.max(insets.bottom, 40) }]}>
-                    {/* 1. Header Section - Shine & Greeting */}
-                    <View style={{ width: '100%', alignItems: 'center', marginBottom: 40 }}>
-                        <FadeSlideIn delay={100}>
-                            <View style={[s.introLogoCircle, { marginBottom: 20 }]}>
-                                <Ionicons name="sparkles" size={48} color="#ff6b6b" />
-                            </View>
-                        </FadeSlideIn>
-                        <FadeSlideIn delay={250}>
-                            <Text style={s.introGreetingNice}>{getGreeting() + ' \uD83D\uDC4B'}</Text>
-                        </FadeSlideIn>
-                        <FadeSlideIn delay={350} style={{ marginTop: 6 }}>
-                            <Text style={s.introTitleSmall}>Swipe to Wipe</Text>
-                        </FadeSlideIn>
-                    </View>
 
-                    {/* 2. Middle Section - Balanced Gallery Summary */}
-                    <FadeSlideIn delay={550} style={{ width: '100%' }}>
-                        <View style={s.introHeroCard}>
-                            <LinearGradient colors={['#ffffff', '#fff9fb']} style={StyleSheet.absoluteFill} />
-                            <View style={s.introHeroContent}>
-                                <Text style={s.introHeroLabel}>Your Gallery Summary</Text>
-                                <View style={s.introHeroStats}>
-                                    <View style={s.introHeroStat}>
-                                        <View style={[s.introHeroIconWrap, { backgroundColor: '#fff4f4' }]}>
-                                            <Ionicons name="image" size={24} color="#ff6b6b" />
-                                        </View>
-                                        <CountUp to={categoryCounts.photos} style={s.introHeroStatNum} delay={400} />
-                                        <Text style={s.introHeroStatLbl}>Photos</Text>
-                                    </View>
-                                    <View style={s.introHeroStatDivider} />
-                                    <View style={s.introHeroStat}>
-                                        <View style={[s.introHeroIconWrap, { backgroundColor: '#fff4f4' }]}>
-                                            <Ionicons name="videocam" size={24} color="#ff6b6b" />
-                                        </View>
-                                        <CountUp to={categoryCounts.videos} style={s.introHeroStatNum} delay={600} />
-                                        <Text style={s.introHeroStatLbl}>Videos</Text>
-                                    </View>
+    /* â”€â”€â”€ INTRO SCREEN â”€â”€â”€ */
+    const totalItems = categoryCounts.photos + categoryCounts.videos;
+    const estMinutes = Math.ceil(totalItems / 100);
+
+
+    const introScreen = (
+        <View style={s.container}>
+            <LinearGradient colors={['#FFFFFF', '#FFF5F1']} style={StyleSheet.absoluteFill} />
+            <StatusBar barStyle="dark-content" />
+            <SettingsModal
+                visible={isSettingsVisible}
+                onClose={() => setIsSettingsVisible(false)}
+                isPro={isPro}
+                onUpgrade={() => setPaywallVisible(true)}
+                onSignOut={handleSignOut}
+                onDeleteAccount={handleDeleteAccount}
+                totalClearedBytes={totalClearedBytes}
+                totalDeletedPhotos={totalDeletedPhotos}
+                fmt={fmt}
+                onResetSwipes={async () => {
+                    await resetDailyLimits();
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    Alert.alert('Debug Success', 'Daily swipes restored. 🛠️');
+                }}
+            />
+
+            <ScrollView
+                contentContainerStyle={[s.introScrollContent, { paddingTop: insets.top + 30, paddingBottom: (isPro ? 40 : 100) + insets.bottom }]}
+                showsVerticalScrollIndicator={false}
+            >
+                {/* Custom Header Row */}
+                <View style={s.newHeaderRow}>
+                    <View>
+                        <Text style={[s.homeHeroSub, { color: '#FF6B6B', fontWeight: '700', marginBottom: -4, fontSize: 15 }]}>{getGreeting()},</Text>
+                        <Text style={[s.homeHeroTitle, { fontSize: 32 }]}>Ready to clean?</Text>
+                    </View>
+                    <ScalePress style={s.newHeaderIconBg} onPress={() => setIsSettingsVisible(true)}>
+                        <Ionicons name="settings-outline" size={22} color="#1C1C1E" />
+                    </ScalePress>
+                </View>
+
+                {/* Hero Stats */}
+                <View style={s.homeHero}>
+                    <Text style={[s.homeHeroSub, { color: '#8E8E93', fontSize: 16, lineHeight: 24 }]}>
+                        You have{' '}
+                        <Text style={{ color: '#1C1C1E', fontWeight: '600' }}>
+                            {categoryCounts.total.toLocaleString()} photos &amp; videos
+                        </Text>
+                        {' '}to review.{' '}
+                        {isPro ? (
+                            <Text style={{ color: '#FF6B6B', fontWeight: '700' }}>Cleaning without limits. 🚀</Text>
+                        ) : (
+                            <Text>Use your{' '}
+                                <Text style={{ color: '#FF6B6B', fontWeight: '700' }}>free 50 swipes.</Text>
+                            </Text>
+                        )}
+                    </Text>
+                </View>
+
+                {/* Impact Card (Lifetime Stats) */}
+                {(totalClearedBytes > 0 || totalDeletedPhotos > 0) && (
+                    <View style={s.impactCard}>
+                        <LinearGradient colors={['#FF8E8E', '#FF6B6B']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+                        <View style={s.impactContent}>
+                            <View style={s.impactHeader}>
+                                <Text style={s.impactLabel}>LIFETIME IMPACT</Text>
+                                <Ionicons name="sparkles" size={16} color="rgba(255,255,255,0.8)" />
+                            </View>
+                            <View style={s.impactStatsRow}>
+                                <View style={s.impactStatItem}>
+                                    <Text style={s.impactVal}>{fmt(totalClearedBytes).split(' ')[0]}<Text style={s.impactUnit}>{fmt(totalClearedBytes).split(' ')[1]}</Text></Text>
+                                    <Text style={s.impactSub}>Storage Freed</Text>
                                 </View>
-                                
-                                <ScalePress 
-                                    style={s.introMainBtn}
-                                    onPress={() => enterSession('Random')}
-                                >
-                                    <LinearGradient colors={['#ff6b6b', '#ff8e53']} style={s.introMainBtnGrad}>
-                                        <Text style={s.introMainBtnTxt}>Start Cleaning 🧹</Text>
-                                    </LinearGradient>
-                                </ScalePress>
+                                <View style={s.impactDivider} />
+                                <View style={s.impactStatItem}>
+                                    <Text style={s.impactVal}>{totalDeletedPhotos.toLocaleString()}</Text>
+                                    <Text style={s.impactSub}>Items Deleted</Text>
+                                </View>
+                                {streak > 1 && (
+                                    <>
+                                        <View style={s.impactDivider} />
+                                        <View style={s.impactStatItem}>
+                                            <Text style={s.impactVal}>{streak}</Text>
+                                            <Text style={s.impactSub}>Day Streak</Text>
+                                        </View>
+                                    </>
+                                )}
                             </View>
                         </View>
-                    </FadeSlideIn>
+                    </View>
+                )}
 
-                    {/* 3. Footer Section - Storage Health Status */}
-                    <View style={{ width: '100%', alignItems: 'center', marginTop: 44 }}>
-                        {storage && (
-                            <FadeSlideIn delay={800} style={s.introStorageWrap}>
-                                <View style={s.introStorageHeader}>
-                                    <Text style={s.introStorageTxt}>Storage Healthy</Text>
-                                    <Text style={s.introStorageVal}>{fmt(storage.used)} / {fmt(storage.total)}</Text>
-                                </View>
-                                <View style={s.introStorageTrack}>
-                                    <View style={[s.introStorageFill, { width: `${Math.min(100, (storage.used / storage.total) * 100)}%` }]} />
-                                </View>
-                            </FadeSlideIn>
-                        )}
-                        
-                        <FadeSlideIn delay={1000}>
-                            <Text style={s.introStatus}>
-                                {totalClearedBytes > 0
-                                    ? `✨ You've freed up ${(totalClearedBytes / (1024 * 1024)).toFixed(1)} MB!`
-                                    : "Curating your story, one memory at a time"}
-                            </Text>
-                        </FadeSlideIn>
+                {/* Main CTA */}
+                <View style={{ alignItems: 'center', marginBottom: 24 }}>
+                    <CtaPulse>
+                        <ScalePress style={[s.mainCta, {
+                            flexDirection: 'row',
+                            justifyContent: 'center',
+                            shadowColor: '#FF4444',
+                            shadowOffset: { width: 0, height: 12 },
+                            shadowOpacity: 0.45,
+                            shadowRadius: 20,
+                            elevation: 12,
+                        }]} onPress={() => enterSession('Random')}>
+                            <LinearGradient
+                                colors={['#FF6B6B', '#FF9A5C']}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                                style={[StyleSheet.absoluteFill, { borderRadius: 32 }]}
+                            />
+                            <Text style={{ fontSize: 20, marginRight: 8 }}>🧹</Text>
+                            <Text style={[s.mainCtaText, { fontSize: 20, fontWeight: '800' }]}>Start Swiping</Text>
+                        </ScalePress>
+                    </CtaPulse>
+                    <Text style={{ fontFamily: 'System', color: '#A1A1AA', fontSize: 13, marginTop: 6, fontWeight: '500' }}>
+                        {isPro ? '✨ Unlimited swipes activated' : `${photoSwipesRemaining} swipes left today`}
+                    </Text>
+                </View>
+
+                {/* Category Grid */}
+                <View style={s.catGrid}>
+                    <View style={s.catCol}>
+                        <ScalePress style={s.homeCatCard} onPress={() => enterSession('Screenshots')}>
+                            <LinearGradient colors={['#6EE7B7', '#34D399']} style={s.catIcon}>
+                                <Ionicons name="camera" size={24} color="#fff" />
+                            </LinearGradient>
+                            <Text style={s.homeCatTitle}>Screenshots</Text>
+                            <Text style={s.homeCatSub}>{categoryCounts.screenshots} items</Text>
+                        </ScalePress>
+
+                        <ScalePress style={s.homeCatCard} onPress={() => enterSession('Videos')}>
+                            <LinearGradient colors={['#FCA5A5', '#F87171']} style={s.catIcon}>
+                                <Ionicons name="videocam" size={24} color="#fff" />
+                            </LinearGradient>
+                            <Text style={s.homeCatTitle}>Videos</Text>
+                            <Text style={s.homeCatSub}>{categoryCounts.videos} items</Text>
+                        </ScalePress>
+                    </View>
+
+                    <View style={s.catCol}>
+                        <ScalePress style={s.homeCatCard} onPress={() => enterSession('Random')}>
+                            <LinearGradient colors={['#93C5FD', '#60A5FA']} style={s.catIcon}>
+                                <Ionicons name="shuffle" size={24} color="#fff" />
+                            </LinearGradient>
+                            <Text style={s.homeCatTitle}>Random Mix</Text>
+                            <Text style={s.homeCatSub}>Clean everything</Text>
+                        </ScalePress>
+
+                        <ScalePress style={s.homeCatCard} onPress={openDatePicker}>
+                            <LinearGradient colors={['#FCD34D', '#FBBF24']} style={s.catIcon}>
+                                <Ionicons name="calendar" size={24} color="#fff" />
+                            </LinearGradient>
+                            <Text style={s.homeCatTitle}>Calendar</Text>
+                            <Text style={s.homeCatSub}>{dateFilter ? `${dateFilter.day}/${dateFilter.month}/${dateFilter.year}` : 'Pick a specific date'}</Text>
+                        </ScalePress>
                     </View>
                 </View>
-            </View>
-        );
-    }
+            </ScrollView>
 
-    /* ΓöÇΓöÇ MAIN SWIPE SCREEN ΓöÇΓöÇ */
-    return (
+            {/* Ad removed from home screen for breathability */}
+        </View>
+    );
+
+
+
+    /* --- MAIN SWIPE SCREEN --- */
+    const swipeScreen = (
         <View style={s.container}>
             <StatusBar barStyle="dark-content" />
-            <LinearGradient colors={['#fff0f5', '#ffffff', '#fff0f5']} style={StyleSheet.absoluteFill} />
+            <RollModal visible={showRollModal} onClose={() => setShowRollModal(false)} />
 
-            {/* Header */}
-            <View style={[s.header, { paddingTop: Math.max(insets.top, 12) }]}>
-                <View style={s.headerLeft}>
-                    <ScalePress
-                        style={{ padding: 4, marginRight: 8 }}
-                        onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                            setShowIntro(true);
-                        }}
-                    >
-                        <Ionicons name="home-outline" size={20} color="#6366f1" />
-                    </ScalePress>
-                    <ScalePress onPress={() => setTutorialStep(1)}>
-                        <Text style={s.title}>
-                            Swipe to <Text style={s.titleBold}>Wipe</Text>
-                        </Text>
-                    </ScalePress>
-                </View>
+            {/* Header Restructured */}
+            <View style={[s.header, { paddingTop: Math.max(insets.top, 12), height: 70 + insets.top, paddingHorizontal: 20 }]}>
+                <ScalePress
+                    style={s.headerIconBg}
+                    onPress={handleBack}
+                >
+                    <Ionicons name="chevron-back" size={22} color="#1C1C1E" />
+                </ScalePress>
 
-
-                    <View style={s.filterPill}>
-                        <Ionicons name="heart" size={12} color="#22c55e" />
-                        <Text style={s.pillCount}>{totalKeptPhotos}</Text>
-                        <View style={s.pillSeparator} />
-                        <Ionicons name="trash" size={12} color="#ef4444" />
-                        <Text style={s.pillTotal}>{totalBinnedPhotos}</Text>
+                <View style={s.headerPillContainer}>
+                    <View style={s.swipePill}>
+                        <Ionicons name="flash" size={14} color="#FF6B6B" />
+                        <Text style={s.swipePillTxt}>{isPro ? 'Unlimited' : `${(photoCount || 0) + (videoCount || 0)}/50`}</Text>
+                    </View>
+                    <View style={s.statsPill}>
+                        <Ionicons name="heart" size={14} color="#22C55E" />
+                        <Text style={s.statsPillTxt}>{sessionStats.kept}</Text>
+                        <View style={s.pillDivider} />
+                        <Ionicons name="trash" size={14} color="#FF3B30" />
+                        <Text style={s.statsPillTxt}>{sessionStats.deleted}</Text>
                     </View>
                 </View>
-            
+
+                <ScalePress
+                    style={s.headerIconBg}
+                    onPress={() => router.push('/bin')}
+                >
+                    <Ionicons name="trash-outline" size={22} color="#1C1C1E" />
+                </ScalePress>
+            </View>
+
 
             {/* Cards Area */}
             <View style={s.cardArea}>
+
                 {isLoadingSession ? (
                     <View style={s.emptyState}>
-                        <ActivityIndicator size="large" color="#ff6b6b" />
+                        <ActivityIndicator size="large" color="#FF6B6B" />
                         <Text style={[s.emptySub, { marginTop: 20 }]}>Gathering your media...</Text>
                     </View>
                 ) : currentPhoto ? (
-                    <View style={s.cardContainerWrapper}>
+                    <>
+                        <View style={s.cardContainerWrapper}>
                         <GestureDetector gesture={combinedGesture}>
                             <Animated.View style={s.cardContainer}>
                                 {renderCards()}
                             </Animated.View>
                         </GestureDetector>
-                        
+
                         {tutorialStepState === 1 && (
                             <Animated.View style={[s.ghostHandContainer, handStyle]} pointerEvents="none">
                                 <View style={s.ghostHandLabels}>
                                     <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP) }]}>
-                                        <View style={[s.ghostLabelPill, { backgroundColor: '#22c55e' }]}>
+                                        <View style={[s.ghostLabelPill, { backgroundColor: '#ff6b6b' }]}>
                                             <Ionicons name="heart" size={14} color="#fff" />
                                             <Text style={s.ghostLabelTxt}>Swipe Right to Keep</Text>
                                         </View>
                                     </Animated.View>
                                     <Animated.View style={[s.ghostLabel, { opacity: interpolate(translateX.value, [0, -SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP) }]}>
-                                        <View style={[s.ghostLabelPill, { backgroundColor: '#ef4444' }]}>
+                                        <View style={[s.ghostLabelPill, { backgroundColor: '#ff8e53' }]}>
                                             <Ionicons name="trash" size={14} color="#fff" />
                                             <Text style={s.ghostLabelTxt}>Swipe Left to Delete</Text>
                                         </View>
@@ -806,195 +1181,218 @@ export default function SwipeScreen() {
                                 </View>
                             </Animated.View>
                         )}
-                    </View>
+                        </View>
+                    </>
                 ) : (
                     <View style={s.emptyState}>
-                        <Text style={s.emptyEmoji}>
-                            {dateFilter ? '✨' : '\uD83C\uDF89'}
-                        </Text>
-                        <Text style={s.emptyTitle}>
-                            {dateFilter ? 'Crystal Clear!' : 'All Done!'}
-                        </Text>
-                        <Text style={s.emptySub}>
-                            {dateFilter 
-                                ? `Your ${dateFilter.day ? (dateFilter.day + ' ') : ''}${dateFilter.month !== undefined ? (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dateFilter.month] + ' ') : ''}${dateFilter.year} is already squeaky clean! 🧼`
-                                : 'Nothing more to wipe here. You\'re a cleaning wizard! 🪄'}
-                        </Text>
-                        <Pressable style={s.goBackBtn} onPress={() => {
-                            if (dateFilter) setDateFilter(null);
-                            handleBack();
-                        }}>
-                            <LinearGradient colors={['#6366f1', '#8b5cf6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.goBackGrad}>
-                                <Text style={s.goBackTxt}>{dateFilter ? 'Clear Filter' : 'Go Back'}</Text>
-                            </LinearGradient>
-                        </Pressable>
+                        <View style={s.emptyContent}>
+                            <View style={s.emptyIconWrap}>
+                                <Ionicons name="sparkles" size={50} color="#FF6B6B" />
+                            </View>
 
-                        {!dateFilter && (
-                            <ScalePress 
-                                style={{ marginTop: 24, alignItems: 'center' }} 
-                                onPress={() => {
-                                    handleBack();
-                                    setShowCalendar(true);
-                                }}
-                            >
-                                <Text style={{ fontFamily: 'DMSans_700Bold', color: '#6366f1', fontSize: 15 }}>
-                                    Ready for a deep dive? Clean up 2023 📅
-                                </Text>
+                            <Text style={s.emptyTitle}>
+                                {dateFilter && photos.length === 0 ? "No Photos Found" : "Squeaky Clean!"}
+                            </Text>
+                            <Text style={s.emptySub}>
+                                {dateFilter
+                                    ? (photos.length === 0
+                                        ? "We couldn't find any photos or videos for this particular date."
+                                        : "You've reviewed every photo from this date. Great job!")
+                                    : "You've swiped through all your photos here. Mission accomplished!"}
+                            </Text>
+                        </View>
+
+                        <View style={s.emptyActions}>
+                            <ScalePress style={s.dashboardBtn} onPress={handleBack}>
+                                <LinearGradient colors={['#FF8E8E', '#FF6B6B']} style={[StyleSheet.absoluteFill, { borderRadius: 32 }]} />
+                                <Text style={s.dashboardBtnTxt}>Back to Dashboard</Text>
                             </ScalePress>
-                        )}
+
+                            <ScalePress style={s.calendarBtn} onPress={() => {
+                                handleBack();
+                                setTimeout(() => setShowCalendar(true), 300);
+                            }}>
+                                <Ionicons name="calendar" size={20} color="#FF6B6B" />
+                                <Text style={s.calendarBtnTxt}>Pick Another Date</Text>
+                            </ScalePress>
+                        </View>
                     </View>
                 )}
             </View>
 
-            <>
-                {/* Step 3 (was 2) Tutorial Overlay (The Bin Pointer) */}
+            {/* Step 3 (was 2) Tutorial Overlay (The Bin Pointer) */}
                 {tutorialStepState === 3 && (
-                <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999, justifyContent: 'center' }]} pointerEvents="box-none">
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]} />
-                    
-                    <Animated.View entering={FadeInDown.duration(600).delay(300).springify()} style={s.tutBinOverlay}>
-                        <View style={s.tutIconWrap}>
-                            <Ionicons name="shield-checkmark" size={44} color="#34C759" />
-                        </View>
-                        <Text style={s.tutBinTitle}>Safe in the Bin! 🛡️</Text>
-                        <Text style={s.tutBinDesc}>
-                            Don't panic! Trashed photos are never deleted instantly. They wait safely in your <Text style={{fontWeight: '800', color: '#fff'}}>Review Bin</Text> first.
-                        </Text>
-                        <Text style={s.tutBinDesc2}>
-                            You can permanently delete them or restore them later.
-                        </Text>
-                        
-                        <ScalePress style={s.tutBinBtn} onPress={completeTutorial}>
-                            <Text style={s.tutBinBtnText}>Got it!</Text>
+                    <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999, justifyContent: 'center' }]} pointerEvents="box-none">
+                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]} />
+
+                        <Animated.View entering={FadeInDown.duration(600).delay(300).springify()} style={s.tutBinOverlay}>
+                            <View style={s.tutIconWrap}>
+                                <Ionicons name="shield-checkmark" size={44} color="#ff6b6b" />
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                <Text style={s.tutBinTitle}>Safe in the Bin!</Text>
+                                <Ionicons name="shield-checkmark-outline" size={24} color="#ff6b6b" />
+                            </View>
+                            <Text style={s.tutBinDesc}>
+                                Don't panic! Trashed photos are never deleted instantly. They wait safely in your <Text style={{ fontWeight: '800', color: '#fff' }}>Review Bin</Text> first.
+                            </Text>
+                            <Text style={s.tutBinDesc2}>
+                                You can permanently delete them or restore them later.
+                            </Text>
+
+                            <ScalePress style={s.tutBinBtn} onPress={completeTutorial}>
+                                <Text style={s.tutBinBtnText}>Got it!</Text>
+                            </ScalePress>
+                        </Animated.View>
+
+                        <Animated.View style={s.tutArrowContainer}>
+                            <RNAnimated.Text style={s.tutArrow}>↓</RNAnimated.Text>
+                        </Animated.View>
+                    </View>
+                )}
+
+                {/* Action Bar Consolidated */}
+                {currentPhoto && (
+                    <View style={[s.actions, { bottom: Math.max(insets.bottom, 12) + (isPro ? 24 : 70) }]}>
+                        {/* Undo */}
+                        <ScalePress
+                            style={[s.smallBtn, { opacity: canUndo ? 1 : 0.5 }]}
+                            onPress={() => {
+                                if (!canUndo) return;
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                undo();
+                            }}
+                            disabled={!canUndo}
+                        >
+                            <Ionicons name="arrow-undo" size={22} color={canUndo ? "#1C1C1E" : "#cbd5e1"} />
                         </ScalePress>
-                    </Animated.View>
 
-                    <Animated.View style={s.tutArrowContainer}>
-                        <RNAnimated.Text style={s.tutArrow}>↓</RNAnimated.Text>
-                    </Animated.View>
-                </View>
-            )}
+                        {/* Delete */}
+                        <ScalePress
+                            style={s.mainBtn}
+                            onPress={() => {
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                playDeleteSound();
+                                translateX.value = withSpring(-W * 1.5, { velocity: -500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeLeft)());
+                            }}
+                        >
+                            <Ionicons name="close" size={38} color="#FF3B30" />
+                        </ScalePress>
 
-            {/* Action Bar */}
-            {currentPhoto && (
-                <View style={[s.actions, { paddingBottom: Math.max(insets.bottom, 20) + 144 }]}>
-                    <ScalePress
-                        style={[s.smallBtn, !canUndo && { opacity: 0.3 }]}
-                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); undo(); }}
-                        disabled={!canUndo}
-                    >
-                        <Ionicons name="arrow-undo" size={24} color="#fca5a5" />
-                    </ScalePress>
-                    <ScalePress
-                        style={[s.mainBtn, s.deleteBtn]}
-                        onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            playDeleteSound();
-                            translateX.value = withSpring(-W * 1.5, { velocity: -500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeLeft)());
-                        }}
-                    >
-                        <Ionicons name="close" size={40} color="#ef4444" />
-                    </ScalePress>
-                    <ScalePress
-                        style={[s.smallBtn]}
-                        disabled={isSharing}
-                        onPress={async () => {
-                            if (!currentPhoto || isSharing) return;
-                            setIsSharing(true);
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            try {
-                                if (await Sharing.isAvailableAsync()) {
-                                    // Robust sharing: Resolve to a physical file URI
-                                    const assetInfo = await MediaLibrary.getAssetInfoAsync(currentPhoto.id, { shouldDownloadFromNetwork: true });
-                                    let shareUri = assetInfo.localUri || assetInfo.uri;
+                        {/* Heart */}
+                        <ScalePress
+                            style={s.mainBtn}
+                            onPress={() => {
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                translateX.value = withSpring(W * 1.5, { velocity: 500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeRight)());
+                            }}
+                        >
+                            <Ionicons name="heart" size={34} color="#22C55E" />
+                        </ScalePress>
 
-                                    if (!shareUri) {
-                                        Alert.alert('Download Failed', 'Could not fetch this media. Please check your internet connection.');
-                                        return;
-                                    }
+                        {/* Share */}
+                        <ScalePress
+                            style={s.smallBtn}
+                            disabled={isSharing}
+                            onPress={async () => {
+                                if (!currentPhoto || isSharing) return;
+                                setIsSharing(true);
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                try {
+                                    if (await Sharing.isAvailableAsync()) {
+                                        const assetInfo = await MediaLibrary.getAssetInfoAsync(currentPhoto.id, { shouldDownloadFromNetwork: true });
+                                        let shareUri = assetInfo.localUri || assetInfo.uri;
 
-                                    const isVideo = currentPhoto.mediaType === 'video';
-                                    const ext = currentPhoto.filename?.split('.').pop()?.toLowerCase() || (isVideo ? 'mp4' : 'jpg');
-
-                                    // WhatsApp rejects ph:// links and virtual content URIs.
-                                    // Universally ensure the shareUri is a physical local file://
-                                    if (!shareUri.startsWith('file://')) {
-                                        try {
-                                            const baseDir = (FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory;
-                                            if (!baseDir) throw new Error('No storage');
-                                            
-                                            const tmpDir = baseDir + 'shares/';
-                                            await FileSystem.makeDirectoryAsync(tmpDir, { intermediates: true }).catch(() => { });
-                                            const tmpFile = `${tmpDir}${currentPhoto.id}.${ext}`;
-                                            await FileSystem.copyAsync({ from: shareUri, to: tmpFile });
-                                            shareUri = tmpFile;
-                                        } catch (err) {
-                                            console.warn('Local resolution failed', err);
+                                        if (!shareUri) {
+                                            Alert.alert('Download Failed', 'Could not fetch this media. Please check your internet connection.');
+                                            return;
                                         }
-                                    }
 
-                                    const shareMessage = `Hey, look what I found while cleaning my phone! ✨\n\nGet Swipe to Wipe:\n🍏 iOS: https://apps.apple.com/us/app/swipe-to-wipe/id6761011430\n🤖 Android: https://play.google.com/store/apps/details?id=com.purvichopra.swipetowipe`;
+                                        const isVideo = currentPhoto.mediaType === 'video';
+                                        const ext = currentPhoto.filename?.split('.').pop()?.toLowerCase() || (isVideo ? 'mp4' : 'jpg');
 
-                                    if (Platform.OS === 'ios') {
-                                        // iOS supports combined sharing (File + Message) via built-in Share module
-                                        // But first, let's ensure photos are JPEGs (iCloud/HEIC often fail in WhatsApp)
-                                        if (currentPhoto.mediaType === 'photo') {
+                                        if (!shareUri.startsWith('file://')) {
                                             try {
-                                                const manip = await ImageManipulator.manipulateAsync(
-                                                    shareUri, [], { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
-                                                );
-                                                shareUri = manip.uri;
-                                            } catch (e) { console.warn('HEIC conversion failed', e); }
+                                                const baseDir = Paths.cache.uri;
+                                                const tmpDir = `${baseDir}/share_tmp/`;
+                                                const tmpFile = `${tmpDir}${currentPhoto.id}.${ext}`;
+
+                                                const dir = new Directory(tmpDir);
+                                                if (!dir.exists) {
+                                                    dir.create({ intermediates: true });
+                                                }
+
+                                                new File(shareUri).copy(new File(tmpFile));
+                                                shareUri = tmpFile;
+                                            } catch (err) {
+                                                console.warn('Local resolution failed', err);
+                                            }
                                         }
 
-                                        await Share.share({
-                                            url: shareUri,
-                                            message: shareMessage,
-                                        });
-                                    } else {
-                                        // Android usually requires expo-sharing for local files to be reliable
-                                        await Clipboard.setStringAsync(shareMessage);
-                                        await Sharing.shareAsync(shareUri, {
-                                            dialogTitle: 'Share with friends',
-                                            mimeType: isVideo ? `video/${ext === 'mov' ? 'quicktime' : 'mp4'}` : "image/jpeg",
-                                        });
+                                        const shareMessage = `Hey, look what I found while cleaning my phone! ✨\n\nGet Swipe to Wipe:\n🍎 iOS: https://apps.apple.com/us/app/swipe-to-wipe/id6761011430\n🤖 Android: https://play.google.com/store/apps/details?id=com.purvichopra.swipetowipe`;
 
-                                        // Toast-like feedback for Android since message is copied
-                                        setTimeout(() => {
-                                            Alert.alert(
-                                                "Message Copied!",
-                                                "Social apps on Android often skip the message when a file is shared directly. We've copied it to your clipboard so you can just 'Paste' it in the chat! \u2728",
-                                                [{ text: "Got it!" }]
-                                            );
-                                        }, 800);
+                                        if (Platform.OS === 'ios') {
+                                            if (currentPhoto.mediaType === 'photo') {
+                                                try {
+                                                    const manip = await ImageManipulator.manipulateAsync(
+                                                        shareUri, [], { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
+                                                    );
+                                                    shareUri = manip.uri;
+                                                } catch (e) { console.warn('HEIC conversion failed', e); }
+                                            }
+
+                                            await Share.share({
+                                                url: shareUri,
+                                                message: shareMessage,
+                                            });
+                                        } else {
+                                            await Clipboard.setStringAsync(shareMessage);
+                                            await Sharing.shareAsync(shareUri, {
+                                                dialogTitle: 'Share with friends',
+                                                mimeType: isVideo ? `video/${ext === 'mov' ? 'quicktime' : 'mp4'}` : "image/jpeg",
+                                            });
+
+                                            setTimeout(() => {
+                                                Alert.alert(
+                                                    "Message Copied!",
+                                                    "Social apps on Android often skip the message when a file is shared directly. We've copied it to your clipboard so you can just 'Paste' it in the chat! ✨",
+                                                    [{ text: "Got it!" }]
+                                                );
+                                            }, 800);
+                                        }
+                                    } else {
+                                        Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
                                     }
-                                } else {
-                                    Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
+                                } catch (err) {
+                                    console.error('Sharing error:', err);
+                                    Alert.alert('Error', 'Failed to prepare photo for sharing. Please ensure you have internet and try again.');
+                                } finally {
+                                    setIsSharing(false);
                                 }
-                            } catch (err) {
-                                console.error('Sharing error:', err);
-                                Alert.alert('Error', 'Failed to prepare photo for sharing. Please ensure you have internet and try again.');
-                            } finally {
-                                setIsSharing(false);
-                            }
-                        }}
-                    >
-                        <Ionicons name="share-social-outline" size={24} color="#3b82f6" />
-                    </ScalePress>
-                    <ScalePress
-                        style={[s.mainBtn, s.keepBtn]}
-                        onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            translateX.value = withSpring(W * 1.5, { velocity: 500, stiffness: 200, damping: 20 }, () => runOnJS(handleSwipeRight)());
-                        }}
-                    >
-                        <Ionicons name="heart" size={36} color="#22c55e" />
-                    </ScalePress>
-                    <ScalePress style={s.smallBtn} onPress={openInfo}>
-                        <Ionicons name="information" size={22} color="#fca5a5" />
-                    </ScalePress>
+                            }}
+                        >
+                            <Ionicons name="paper-plane-outline" size={20} color="#1C1C1E" />
+                        </ScalePress>
+                        </View>
+                    )}
+            {/* End of Actions */}
+
+            {/* Swipe Screen Ad Banner */}
+            {!isPro && (
+                <View style={s.homeAd}>
+                    <AppBannerAd
+                        unitId={AdUnits.BANNER}
+                        size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                        requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+                    />
                 </View>
             )}
+        </View>
+    );
+
+    return (
+        <View style={s.container}>
+            {showIntro ? introScreen : swipeScreen}
 
             {/* Celebration Popup */}
             <Modal visible={showCelebration} transparent animationType="none" onRequestClose={closeCelebration}>
@@ -1026,16 +1424,16 @@ export default function SwipeScreen() {
                         <View style={s.celebStatsCol}>
                             <View style={[s.celebStatRow, { backgroundColor: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.2)' }]}>
                                 <View style={[s.celebStatIcon, { backgroundColor: 'rgba(239,68,68,0.2)' }]}>
-                                    <Ionicons name="trash" size={16} color="#ef4444" />
+                                    <Ionicons name="trash" size={16} color="#ff8e53" />
                                 </View>
-                                <Text style={[s.celebStatNum, { color: '#ef4444' }]}>{sessionStats.deleted}</Text>
+                                <Text style={[s.celebStatNum, { color: '#ff8e53' }]}>{sessionStats.deleted}</Text>
                                 <Text style={s.celebStatLabel}>Deleted</Text>
                             </View>
-                            <View style={[s.celebStatRow, { backgroundColor: 'rgba(34,197,94,0.1)', borderColor: 'rgba(34,197,94,0.2)' }]}>
-                                <View style={[s.celebStatIcon, { backgroundColor: 'rgba(34,197,94,0.2)' }]}>
-                                    <Ionicons name="heart" size={16} color="#22c55e" />
+                            <View style={[s.celebStatRow, { backgroundColor: 'rgba(255,107,107,0.1)', borderColor: 'rgba(255,107,107,0.2)' }]}>
+                                <View style={[s.celebStatIcon, { backgroundColor: 'rgba(255,107,107,0.2)' }]}>
+                                    <Ionicons name="heart" size={16} color="#ff6b6b" />
                                 </View>
-                                <Text style={[s.celebStatNum, { color: '#22c55e' }]}>{sessionStats.kept}</Text>
+                                <Text style={[s.celebStatNum, { color: '#ff6b6b' }]}>{sessionStats.kept}</Text>
                                 <Text style={s.celebStatLabel}>Kept</Text>
                             </View>
                         </View>
@@ -1045,11 +1443,11 @@ export default function SwipeScreen() {
                                 <Text style={s.progressNum}>{sessionStats.swiped} / {sessionStats.swiped + remainingCount}</Text>
                             </View>
                             <View style={s.progressTrack}>
-                                <View style={[s.progressFill, { width: `${Math.min(100, (sessionStats.swiped / (sessionStats.swiped + remainingCount)) * 100)}%` }]} />
+                                <View style={[s.progressFill, { width: `${(() => { const t = sessionStats.swiped + remainingCount; return t > 0 ? Math.min(100, (sessionStats.swiped / t) * 100) : 0; })()}%` }]} />
                             </View>
                         </View>
                         <Pressable style={({ pressed }) => [s.celebPrimaryBtn, pressed && { transform: [{ scale: 0.96 }] }]} onPress={closeCelebration}>
-                            <LinearGradient colors={['#6366f1', '#8b5cf6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.celebPrimaryGrad}>
+                            <LinearGradient colors={['#ff6b6b', '#ff8e53']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.celebPrimaryGrad}>
                                 <Text style={s.celebPrimaryTxt}>Continue Swiping</Text>
                             </LinearGradient>
                         </Pressable>
@@ -1070,570 +1468,479 @@ export default function SwipeScreen() {
                         <View style={s.sortHandle} />
                         <Text style={s.sortTitle}>Sort Gallery</Text>
                         <ScalePress style={[s.sortOpt, sortMode === 'newest' && { borderColor: '#ff6b6b', backgroundColor: '#fff5f5' }]} onPress={() => { setSortMode('newest'); closeSort(); }}>
-                            <View style={[s.sortIcon, { backgroundColor: 'rgba(99,102,241,0.1)' }]}><Ionicons name="time-outline" size={20} color="#6366f1" /></View>
-                            <Text style={[s.sortOptTxt, sortMode === 'newest' && { color: '#ff6b6b', fontFamily: 'DMSans_700Bold' }]}>Newest First</Text>
+                            <View style={[s.sortIcon, { backgroundColor: 'rgba(255,107,107,0.1)' }]}><Ionicons name="time-outline" size={20} color="#ff6b6b" /></View>
+                            <Text style={[s.sortOptTxt, sortMode === 'newest' && { color: '#ff6b6b', fontFamily: 'System' }]}>Newest First</Text>
                         </ScalePress>
                         <ScalePress style={[s.sortOpt, sortMode === 'oldest' && { borderColor: '#ff6b6b', backgroundColor: '#fff5f5' }]} onPress={() => { setSortMode('oldest'); closeSort(); }}>
-                            <View style={[s.sortIcon, { backgroundColor: 'rgba(236,72,153,0.1)' }]}><Ionicons name="hourglass-outline" size={20} color="#ec4899" /></View>
-                            <Text style={[s.sortOptTxt, sortMode === 'oldest' && { color: '#ff6b6b', fontFamily: 'DMSans_700Bold' }]}>Oldest First</Text>
+                            <View style={[s.sortIcon, { backgroundColor: 'rgba(255,107,107,0.1)' }]}><Ionicons name="hourglass-outline" size={20} color="#ff6b6b" /></View>
+                            <Text style={[s.sortOptTxt, sortMode === 'oldest' && { color: '#ff6b6b', fontFamily: 'System' }]}>Oldest First</Text>
                         </ScalePress>
                         <ScalePress style={[s.sortOpt, sortMode === 'largest' && { borderColor: '#ff6b6b', backgroundColor: '#fff5f5' }]} onPress={() => { setSortMode('largest'); closeSort(); }}>
-                            <View style={[s.sortIcon, { backgroundColor: 'rgba(34,197,94,0.1)' }]}><Ionicons name="expand-outline" size={20} color="#22c55e" /></View>
-                            <Text style={[s.sortOptTxt, sortMode === 'largest' && { color: '#ff6b6b', fontFamily: 'DMSans_700Bold' }]}>Largest First</Text>
+                            <View style={[s.sortIcon, { backgroundColor: 'rgba(255,107,107,0.1)' }]}><Ionicons name="expand-outline" size={20} color="#ff6b6b" /></View>
+                            <Text style={[s.sortOptTxt, sortMode === 'largest' && { color: '#ff6b6b', fontFamily: 'System' }]}>Largest First</Text>
                         </ScalePress>
                     </Animated.View>
                 </Pressable>
             </Modal>
 
             {/* Time Jump Modal */}
-                    <Modal visible={showCalendar} transparent animationType="none" onRequestClose={closeDatePicker}>
-                        <Pressable style={s.overlay} onPress={closeDatePicker}>
-                            <GestureDetector gesture={datePanGesture}>
-                                <Animated.View style={[s.sortSheet, dateSheetStyle]} onStartShouldSetResponder={() => true}>
-                                    <LinearGradient colors={['#ffffff', '#fffefe'] as [string, string]} style={StyleSheet.absoluteFill} />
-                                    <View style={s.sortHandle} />
-                                    
-                                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140, flexGrow: 1 }}>
-                                    
-                                    {localCalTutVisible && (
-                                        <Animated.View entering={FadeInDown.duration(600).springify()} style={[s.calTutCard, { marginVertical: 32 }]}>
-                                            <View style={s.calTutIconWrap}>
-                                                <Ionicons name="time" size={38} color="#6366f1" />
-                                            </View>
-                                            <Text style={s.calTutTitle}>Clean your history 🕰️</Text>
-                                            <Text style={s.calTutDesc}>
-                                                Pick a year or month to find and sweep away older photos.
-                                            </Text>
-                                            
-                                            <ScalePress style={s.calTutBtn} onPress={dismissCalTutorial}>
-                                                <Text style={s.calTutBtnText}>Got it</Text>
-                                            </ScalePress>
-                                        </Animated.View>
-                                    )}
+            <Modal visible={showCalendar} transparent animationType="none" onRequestClose={closeDatePicker}>
+                <Pressable style={s.overlay} onPress={closeDatePicker}>
+                    <GestureDetector gesture={datePanGesture}>
+                        <Animated.View style={[s.sortSheet, dateSheetStyle]} onStartShouldSetResponder={() => true}>
+                            <LinearGradient colors={['#ffffff', '#fffefe'] as [string, string]} style={StyleSheet.absoluteFill} />
+                            <View style={s.sortHandle} />
 
-                                    {/* 1. Header Copy */}
-                                    <View style={{ marginBottom: 20 }}>
-                                        <Text style={s.emotionalHook}>Revisit your moments</Text>
-                                        <Text style={s.emotionalSub}>Clean them, one swipe at a time</Text>
-                                    </View>
+                            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140, flexGrow: 1 }}>
 
-                                    {/* 2. What do you want to clean? (Former Quick Jumps) */}
-                                    <View style={{ marginBottom: 24 }}>
-                                        <Text style={s.sectionLabel}>What do you want to clean? 🔍</Text>
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingTop: 14, paddingBottom: 10 }}>
-                                            <ScalePress 
-                                                style={s.smartCard} 
-                                                onPress={() => {
-                                                    const filter: DateFilter = { year: new Date().getFullYear(), month: new Date().getMonth(), day: undefined, mediaType: 'all' };
-                                                    setDateFilter(filter);
-                                                    closeDatePicker();
-                                                    startSwipingSession('Random', filter);
-                                                }}
-                                            >
-                                                <View style={[s.smartIcon, { backgroundColor: '#f0f9ff' }]}>
-                                                    <Ionicons name="time" size={20} color="#0ea5e9" />
-                                                </View>
-                                                <Text style={s.smartLabel}>Last 30{"\n"}Days</Text>
-                                            </ScalePress>
-                                            <ScalePress 
-                                                style={s.smartCard} 
-                                                onPress={() => {
-                                                    const filter: DateFilter = { year: new Date().getFullYear(), mediaType: 'all' };
-                                                    setDateFilter(filter);
-                                                    closeDatePicker();
-                                                    startSwipingSession('Random', filter);
-                                                }}
-                                            >
-                                                <View style={[s.smartIcon, { backgroundColor: '#fef2f2' }]}>
-                                                    <Ionicons name="calendar" size={20} color="#ef4444" />
-                                                </View>
-                                                <Text style={s.smartLabel}>This{"\n"}Year</Text>
-                                            </ScalePress>
-                                            <ScalePress 
-                                                style={s.smartCard} 
-                                                onPress={() => {
-                                                    setDateFilter(null);
-                                                    closeDatePicker();
-                                                    startSwipingSession('Videos', null);
-                                                }}
-                                            >
-                                                <View style={[s.smartIcon, { backgroundColor: '#fff1f2' }]}>
-                                                    <Ionicons name="videocam" size={20} color="#f43f5e" />
-                                                </View>
-                                                <Text style={s.smartLabel}>Videos 🎬</Text>
-                                            </ScalePress>
-                                            <ScalePress 
-                                                style={s.smartCard} 
-                                                onPress={() => {
-                                                    setSortMode('random' as any); setDateFilter(null); closeDatePicker();
-                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                                    startSwipingSession('Random', null);
-                                                }}
-                                            >
-                                                <View style={[s.smartIcon, { backgroundColor: '#f5f3ff' }]}>
-                                                    <Ionicons name="dice" size={20} color="#8b5cf6" />
-                                                </View>
-                                                <Text style={s.smartLabel}>Random{"\n"}Entries 🎲</Text>
-                                            </ScalePress>
-                                        </ScrollView>
-                                    </View>
-
-                                    {/* 3. Year Selection */}
-                                    <View style={{ marginBottom: 24 }}>
-                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                                            <Text style={s.sectionLabel}>Pick a Year</Text>
-                                            {dateFilter?.year && (
-                                                <ScalePress 
-                                                    style={[s.entireYearBadge, !dateFilter.month && { backgroundColor: '#22c55e' }]} 
-                                                    onPress={() => selectDate(dateFilter.year, undefined, undefined, false)}
-                                                >
-                                                    <Text style={[s.entireYearTxt, !dateFilter.month && { color: '#fff' }]}>
-                                                        {dateFilter.month === undefined ? 'Full Year Selected' : 'Clean full year →'}
-                                                    </Text>
-                                                    {!dateFilter.month && <Ionicons name="checkmark-sharp" size={12} color="#fff" />}
-                                                </ScalePress>
-                                            )}
+                                {localCalTutVisible && (
+                                    <Animated.View entering={FadeInDown.duration(600).springify()} style={[s.calTutCard, { marginVertical: 32 }]}>
+                                        <View style={s.calTutIconWrap}>
+                                            <Ionicons name="time" size={38} color="#ff6b6b" />
                                         </View>
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingRight: 40, paddingBottom: 10 }}>
-                                            {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => {
-                                                const isSelected = dateFilter?.year === y;
-                                                return (
-                                                    <ScalePress 
-                                                        key={y} 
-                                                        style={[s.yearPill, isSelected && s.yearPillActive, !!dateFilter?.year && !isSelected && { opacity: 0.35 }]} 
-                                                        onPress={() => selectDate(y)}
-                                                    >
-                                                        <Text style={[s.yearPillTxt, isSelected && s.yearPillTxtActive]}>{y}</Text>
-                                                    </ScalePress>
-                                                );
-                                            })}
-                                        </ScrollView>
-                                    </View>
-
-                                    {/* 4. Month Grid */}
-                                    {dateFilter?.year && (
-                                        <View style={{ marginBottom: 24 }}>
-                                            <Text style={s.sectionLabel}>Explore {dateFilter.year}</Text>
-                                            <View style={s.monthsGrid}>
-                                                {[
-                                                    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                                                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-                                                ].map((m, i) => {
-                                                    const now = new Date();
-                                                    const isFuture = dateFilter?.year === now.getFullYear() && i > now.getMonth();
-                                                    const isSelected = dateFilter?.month === i;
-                                                    return (
-                                                        <ScalePress 
-                                                            key={m} disabled={isFuture}
-                                                            style={[s.monthBtn, isSelected && s.monthBtnActive, isFuture && { opacity: 0.15 }]} 
-                                                            onPress={() => selectDate(dateFilter.year, i, undefined, false)}
-                                                        >
-                                                            <Text style={[s.monthTxt, isSelected && s.monthTxtActive]}>{m}</Text>
-                                                            {isFuture && <Ionicons name="lock-closed" size={10} color="#9ca3af" style={{ marginTop: 4 }} />}
-                                                        </ScalePress>
-                                                    );
-                                                })}
-                                            </View>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                            <Text style={s.calTutTitle}>Clean your history</Text>
+                                            <Ionicons name="sparkles-outline" size={20} color="#ff6b6b" />
                                         </View>
-                                    )}
+                                        <Text style={s.calTutDesc}>
+                                            Pick a year or month to find and sweep away older photos.
+                                        </Text>
 
-
-                                    {/* 6. High-Intent Global CTA */}
-                                    {dateFilter?.year && (
-                                        <ScalePress style={[s.globalJumpBtn, { marginTop: 20, marginBottom: 12 }]} onPress={confirmTimeJump}>
-                                            <LinearGradient colors={['#ff6b6b', '#f43f5e']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.globalJumpGrad}>
-                                                <Ionicons name="rocket" size={20} color="#fff" />
-                                                <Text style={s.globalJumpTxt}>
-                                                    {dateFilter.month !== undefined 
-                                                        ? `Clean ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dateFilter.month]} ${dateFilter.year} →`
-                                                        : `Swipe ${dateFilter.year} →`}
-                                                </Text>
-                                            </LinearGradient>
+                                        <ScalePress style={s.calTutBtn} onPress={dismissCalTutorial}>
+                                            <Text style={s.calTutBtnText}>Got it</Text>
                                         </ScalePress>
-                                    )}
+                                    </Animated.View>
+                                )}
 
-                                    {/* 7. Actionable Pro Tip */}
-                                    <View style={s.proTip}>
-                                        <View style={s.proIcon}><Ionicons name="bulb" size={20} color="#ff6b6b" /></View>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={s.proTitle}>Pro Tip</Text>
-                                            <Text style={s.proSub}>{currentProTip.text}</Text>
-                                        </View>
-                                        <ScalePress style={s.proGoBtn} onPress={currentProTip.action}><Text style={s.proGoTxt}>Go</Text></ScalePress>
+                                {/* 1. Header Copy */}
+                                <View style={{ marginBottom: 24, alignItems: 'center' }}>
+                                    <View style={{ width: 44, height: 44, backgroundColor: 'rgba(255,107,107,0.1)', borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 12 }}>
+                                        <Ionicons name="calendar-outline" size={24} color="#ff6b6b" />
                                     </View>
-                                </ScrollView>
-                            </Animated.View>
-                        </GestureDetector>
-                    </Pressable>
-                </Modal>
-                
-                {/* Full Image Preview Modal */}
-                <Modal 
-                    visible={showFullPreview} 
-                    transparent 
-                    animationType="fade" 
-                    onRequestClose={() => setShowFullPreview(false)}
-                >
-                    <Pressable style={s.fullPreviewOverlay} onPress={() => setShowFullPreview(false)}>
-                        <Animated.View entering={FadeInDown.duration(400).springify()} style={s.fullPreviewContent}>
-                            {currentPhoto?.mediaType === 'video' ? (
-                                <VideoView
-                                    player={fullPlayer}
-                                    style={s.fullPreviewImage}
-                                    contentFit="contain"
-                                />
-                            ) : (
-                                <Image 
-                                    source={{ uri: currentPhoto?.url }} 
-                                    style={s.fullPreviewImage} 
-                                    contentFit="contain" 
-                                    transition={200}
-                                />
-                            )}
-                            <View style={s.fullPreviewHeader}>
-                                <ScalePress style={s.fullPreviewClose} onPress={() => setShowFullPreview(false)}>
-                                    <Ionicons name="close-circle" size={44} color="#fff" />
+                                    <Text style={{ fontFamily: 'System', fontSize: 24, color: '#1f2937', marginBottom: 4 }}>By Date</Text>
+                                    <Text style={{ fontFamily: 'System', fontSize: 14, color: '#6b7280', textAlign: 'center' }}>Swipe through memories by the day you took them</Text>
+                                </View>
+
+                                {/* 2. Banner */}
+                                <View style={{ backgroundColor: 'rgba(255,107,107,0.1)', borderRadius: 20, padding: 20, marginBottom: 24 }}>
+                                    <Text style={{ fontFamily: 'System', fontSize: 12, color: '#ff6b6b', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>THIS MONTH</Text>
+                                    <Text style={{ fontFamily: 'System', fontSize: 20, color: '#1f2937', marginBottom: 6 }}>
+                                        {calMonthStats.photos} photos · {calMonthStats.distinctDays.size} days
+                                    </Text>
+                                    <Text style={{ fontFamily: 'System', fontSize: 14, color: '#6b7280' }}>Tap a day to review those photos.</Text>
+                                </View>
+
+                                {/* 3. Navigation Header */}
+                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, paddingHorizontal: 16 }}>
+                                    <ScalePress onPress={() => navMonth(-1)}>
+                                        <View style={{ padding: 8 }}>
+                                            <Ionicons name="chevron-back" size={24} color="#FF6B6B" />
+                                        </View>
+                                    </ScalePress>
+
+                                    <ScalePress
+                                        onPress={() => {
+                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                            setIsPickerMode(!isPickerMode);
+                                        }}
+                                        style={{ backgroundColor: isPickerMode ? 'rgba(255,107,107,0.1)' : 'transparent', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12 }}
+                                    >
+                                        <Text style={{ fontFamily: 'System', fontSize: 17, fontWeight: '700', color: '#1C1C1E' }}>
+                                            {calViewDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                                            <Ionicons name={isPickerMode ? "chevron-up" : "chevron-down"} size={16} color="#FF6B6B" style={{ marginLeft: 4 }} />
+                                        </Text>
+                                    </ScalePress>
+
+                                    <ScalePress onPress={() => navMonth(1)}>
+                                        <View style={{ padding: 8 }}>
+                                            <Ionicons name="chevron-forward" size={24} color="#FF6B6B" />
+                                        </View>
+                                    </ScalePress>
+                                </View>
+
+                                {isPickerMode ? (
+                                    <Animated.View entering={FadeInDown.duration(400)} style={{ paddingHorizontal: 8 }}>
+                                        <Text style={{ fontSize: 12, color: '#A1A1AA', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 16, marginLeft: 8 }}>Quick Skip</Text>
+
+                                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingBottom: 20 }}>
+                                            {years.map(y => (
+                                                <ScalePress
+                                                    key={y}
+                                                    onPress={() => selectYearMonth(y)}
+                                                    style={{
+                                                        paddingHorizontal: 20, paddingVertical: 12, borderRadius: 16,
+                                                        backgroundColor: y === calViewDate.getFullYear() ? '#FF6B6B' : '#F8F8FA',
+                                                        borderWidth: 1, borderColor: y === calViewDate.getFullYear() ? '#FF6B6B' : '#EDEDED'
+                                                    }}
+                                                >
+                                                    <Text style={{ color: y === calViewDate.getFullYear() ? '#fff' : '#1C1C1E', fontWeight: '700' }}>{y}</Text>
+                                                </ScalePress>
+                                            ))}
+                                        </ScrollView>
+
+                                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+                                            {months.map((m, i) => (
+                                                <ScalePress
+                                                    key={m}
+                                                    onPress={() => selectYearMonth(calViewDate.getFullYear(), i)}
+                                                    style={{
+                                                        width: (W - 74) / 3, paddingVertical: 16, alignItems: 'center', borderRadius: 16,
+                                                        backgroundColor: i === calViewDate.getMonth() ? '#FF6B6B' : '#F8F8FA',
+                                                        borderWidth: 1, borderColor: i === calViewDate.getMonth() ? '#FF6B6B' : '#EDEDED'
+                                                    }}
+                                                >
+                                                    <Text style={{ color: i === calViewDate.getMonth() ? '#fff' : '#1C1C1E', fontWeight: '600' }}>{m}</Text>
+                                                </ScalePress>
+                                            ))}
+                                        </View>
+                                    </Animated.View>
+                                ) : (
+                                    <>
+                                        {/* 4. Grid */}
+                                        <View style={{ marginBottom: 24, paddingHorizontal: 8 }}>
+                                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+                                                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
+                                                    <Text key={i} style={{ fontFamily: 'System', fontSize: 12, color: '#A1A1AA', width: 36, textAlign: 'center' }}>{day}</Text>
+                                                ))}
+                                            </View>
+                                            <View style={{ gap: 8 }}>
+                                                {(() => {
+                                                    const year = calViewDate.getFullYear();
+                                                    const month = calViewDate.getMonth();
+                                                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                                                    const firstDayOfWeek = new Date(year, month, 1).getDay();
+
+                                                    const rows = [];
+                                                    let r = 0;
+                                                    while (r * 7 - firstDayOfWeek < daysInMonth) {
+                                                        const rowCells = [];
+                                                        for (let c = 0; c < 7; c++) {
+                                                            const num = r * 7 + c - firstDayOfWeek + 1;
+                                                            const isValid = num > 0 && num <= daysInMonth;
+                                                            const isSelected = num === calSelectedDay;
+                                                            const hasDot = isValid && calMonthStats.distinctDays.has(num);
+                                                            const dotColor = hasDot ? (num % 5 === 0 ? '#FF6B6B' : (num % 3 === 0 ? '#FF8E53' : '#FFB3B3')) : 'transparent';
+
+                                                            rowCells.push(
+                                                                <Pressable
+                                                                    key={c}
+                                                                    style={{ width: 36, height: 36, justifyContent: 'center', alignItems: 'center', borderRadius: 18, backgroundColor: isSelected ? '#FF6B6B' : 'transparent' }}
+                                                                    onPress={() => {
+                                                                        if (isValid) {
+                                                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                                            setCalSelectedDay(num);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <Text style={{ fontFamily: 'System', fontSize: 16, fontWeight: isSelected ? '700' : '400', color: isSelected ? '#fff' : (isValid ? '#1C1C1E' : 'transparent') }}>{isValid ? num : ''}</Text>
+                                                                    {hasDot && !isSelected && <View style={{ position: 'absolute', bottom: 4, width: 4, height: 4, borderRadius: 2, backgroundColor: dotColor }} />}
+                                                                </Pressable>
+                                                            );
+                                                        }
+                                                        rows.push(<View key={r} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>{rowCells}</View>);
+                                                        r++;
+                                                    }
+                                                    return rows;
+                                                })()}
+                                            </View>
+                                        </View>
+
+                                        {/* 5. Legend */}
+                                        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, marginBottom: 36 }}>
+                                            <Text style={{ fontFamily: 'System', fontSize: 12, color: '#A1A1AA' }}>Photos:</Text>
+                                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#FFB3B3', marginHorizontal: 2 }} />
+                                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF8E53', marginHorizontal: 2 }} />
+                                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF6B6B', marginHorizontal: 2 }} />
+                                        </View>
+                                    </>
+                                )}
+
+                                {/* 6. High-Intent Global CTA */}
+                                <ScalePress style={[s.globalJumpBtn, !calSelectedDay && { opacity: 0.5 }]} onPress={() => {
+                                    if (!calSelectedDay) return;
+
+                                    // Allow jump as long as they have swipes left
+                                    if (!isPro && !canSwipe('photo')) {
+                                        setShowCalendar(false);
+                                        setTimeout(() => {
+                                            setPaywallReason('limit');
+                                            setPaywallVisible(true);
+                                        }, 300);
+                                        return;
+                                    }
+
+                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                    const filter = { year: calViewDate.getFullYear(), month: calViewDate.getMonth(), day: calSelectedDay, mediaType: 'all' as const };
+                                    setDateFilter(filter);
+                                    setShowCalendar(false);
+                                    setShowIntro(false); // CRITICAL: Ensure we transition to the swiping screen
+                                    setTimeout(() => {
+                                        startSwipingSession('By Date', filter);
+                                    }, 300);
+                                }}>
+                                    <LinearGradient colors={['#ff6b6b', '#ff8e53']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.globalJumpGrad}>
+                                        <Text style={s.globalJumpTxt}>
+                                            Review {calViewDate.toLocaleString('default', { month: 'short' })} {calSelectedDay || ''} →
+                                        </Text>
+                                    </LinearGradient>
                                 </ScalePress>
-                            </View>
-                            <View style={s.fullPreviewFooter}>
-                                <Text style={s.fullPreviewTitle}>Moment Preview</Text>
-                                <Text style={s.fullPreviewSub}>Curating your story, one memory at a time</Text>
-                            </View>
+                            </ScrollView>
                         </Animated.View>
-                    </Pressable>
-                </Modal>
-                </>
-            </View>
-        );
-    }
+                    </GestureDetector>
+                </Pressable>
+            </Modal>
 
-        const s = StyleSheet.create({
-            container: { flex: 1, backgroundColor: '#fff' },
-            
-            /* —————————————————— Intro Screen Styles —————————————————— */
-            introOverlay: { flex: 1, paddingHorizontal: 40, alignItems: 'center' },
-            introLogoCircle: { 
-                width: 90, height: 90, borderRadius: 45, backgroundColor: '#ffffff',
-                justifyContent: 'center', alignItems: 'center',
-                shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.12, shadowRadius: 24, elevation: 10
-            },
-            introGreetingNice: { fontFamily: 'Syne_400Regular', fontSize: 24, color: '#1f2937', letterSpacing: 0, textAlign: 'center' },
-            introTitleSmall: { fontFamily: 'Syne_800ExtraBold', fontSize: 20, color: '#ff6b6b', opacity: 0.8, textAlign: 'center' },
-            
-            introHeroCard: { 
-                width: '100%', 
-                borderRadius: 44, 
-                overflow: 'hidden',
-                shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.08, shadowRadius: 40, elevation: 12,
-                borderWidth: 1.5, borderColor: '#fff'
-            },
-            introHeroContent: { padding: 40, alignItems: 'center' },
-            introHeroLabel: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 20 },
-            introHeroStats: { flexDirection: 'row', alignItems: 'center', gap: 32, marginBottom: 32 },
-            introHeroStat: { alignItems: 'center' },
-            introHeroIconWrap: { width: 56, height: 56, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
-            introHeroStatNum: { fontFamily: 'DMSans_700Bold', fontSize: 28, color: '#1f2937', letterSpacing: -0.5 },
-            introHeroStatLbl: { fontFamily: 'DMSans_700Bold', fontSize: 12, color: '#9ca3af', textTransform: 'uppercase', marginTop: 4, letterSpacing: 1 },
-            introHeroStatDivider: { width: 1.5, height: 40, backgroundColor: '#f3f4f6' },
-            
-            introMainBtn: { width: '100%', height: 64, borderRadius: 24, overflow: 'hidden' },
-            introMainBtnGrad: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-            introMainBtnTxt: { fontFamily: 'DMSans_700Bold', fontSize: 18, color: '#fff' },
+            {/* Full Image Preview Modal */}
+            <Modal
+                visible={showFullPreview}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowFullPreview(false)}
+            >
+                <Pressable style={s.fullPreviewOverlay} onPress={() => setShowFullPreview(false)}>
+                    <Animated.View entering={FadeInDown.duration(400).springify()} style={s.fullPreviewContent}>
+                        {currentPhoto?.mediaType === 'video' ? (
+                            <VideoView
+                                player={fullPlayer}
+                                style={s.fullPreviewImage}
+                                contentFit="contain"
+                            />
+                        ) : (
+                            <Image
+                                source={{ uri: currentPhoto?.url }}
+                                style={s.fullPreviewImage}
+                                contentFit="contain"
+                                transition={200}
+                            />
+                        )}
+                        <View style={s.fullPreviewHeader}>
+                            <ScalePress style={s.fullPreviewClose} onPress={() => setShowFullPreview(false)}>
+                                <Ionicons name="close-circle" size={44} color="#fff" />
+                            </ScalePress>
+                        </View>
+                        <View style={s.fullPreviewFooter}>
+                            <Text style={s.fullPreviewTitle}>Moment Preview</Text>
+                            <Text style={s.fullPreviewSub}>Curating your story, one memory at a time</Text>
+                        </View>
+                    </Animated.View>
+                </Pressable>
+            </Modal>
 
-            introStorageWrap: { width: '100%', marginBottom: 24 },
-            introStorageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 10 },
-            introStorageTxt: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 13 },
-            introStorageVal: { fontFamily: 'DMSans_500Medium', color: '#9ca3af', fontSize: 11 },
-            introStorageTrack: { width: '100%', height: 6, backgroundColor: '#f3f4f6', borderRadius: 3, overflow: 'hidden' },
-            introStorageFill: { height: '100%', backgroundColor: '#ff6b6b' },
-            introStatus: { fontFamily: 'DMSans_500Medium', color: '#9ca3af', fontSize: 13, textAlign: 'center' },
-            overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
-            header: {
-                flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                paddingHorizontal: 20, paddingBottom: 10, zIndex: 10,
-            },
-            headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-            headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-            title: { fontFamily: 'DMSans_400Regular', fontSize: 18, color: '#1f2937', letterSpacing: -0.2 },
-            titleBold: { fontFamily: 'Syne_800ExtraBold', color: '#ff6b6b' },
+            <Paywall
+                visible={paywallVisible}
+                onClose={() => setPaywallVisible(false)}
+                reason={paywallReason}
+            />
 
-            activeFilterPill: { 
-                flexDirection: 'row', alignItems: 'center', 
-                backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12,
-                shadowColor: 'rgba(0,0,0,0.04)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 10, elevation: 2,
-                borderWidth: 1, borderColor: '#f3f4f6'
-            },
-            activeFilterTxt: { fontFamily: 'DMSans_700Bold', color: '#ff6b6b', fontSize: 13, marginLeft: 6 },
+            <SettingsModal
+                visible={isSettingsVisible}
+                onClose={() => setIsSettingsVisible(false)}
+                isPro={isPro}
+                onUpgrade={() => {
+                    setPaywallReason('upgrade');
+                    setPaywallVisible(true);
+                }}
+                onSignOut={handleSignOut}
+                onDeleteAccount={handleDeleteAccount}
+                totalClearedBytes={totalClearedBytes}
+                totalDeletedPhotos={totalDeletedPhotos}
+                fmt={fmt}
+                onResetSwipes={async () => {
+                    await resetDailyLimits();
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    Alert.alert('Debug Success', 'Daily swipes restored. 🛠️');
+                }}
+            />
+        </View>
+    );
+}
 
-            iconCircle: { 
-                width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', 
-                alignItems: 'center', justifyContent: 'center', 
-                shadowColor: 'rgba(0,0,0,0.04)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 10, elevation: 2,
-                borderWidth: 1, borderColor: '#f3f4f6'
-            },
-            
-            filterPill: {
-                flexDirection: 'row', alignItems: 'center',
-                backgroundColor: '#ffffff', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12,
-                shadowColor: 'rgba(255,107,107,0.12)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 10, elevation: 3,
-                borderWidth: 1.5, borderColor: '#fef2f2',
-            },
-            pillCount: { fontFamily: 'Syne_700Bold', color: '#22c55e', fontSize: 13, marginLeft: 2 },
-            pillTotal: { fontFamily: 'Syne_700Bold', color: '#ef4444', fontSize: 13, marginLeft: 2 },
-            pillSeparator: { width: 1.5, height: 12, backgroundColor: '#f3f4f6', marginHorizontal: 8 },
+const s = StyleSheet.create({
+    container: { flex: 1, backgroundColor: '#FAFAFA' },
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
 
-            cardArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
-            cardContainerWrapper: { width: W * 0.9, height: H * 0.58, position: 'relative' },
-            cardContainer: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', zIndex: 1 },
+    introScrollContent: { paddingHorizontal: 24, paddingBottom: 40 },
+    newHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, marginTop: 10 },
+    newHeaderIconBg: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2, borderWidth: 1, borderColor: '#F1F1F1' },
 
-            actions: {
-                flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-                gap: 12, paddingBottom: 30, paddingTop: 10,
-            },
-            mainBtn: {
-                width: 72, height: 72, borderRadius: 36,
-                alignItems: 'center', justifyContent: 'center',
-                backgroundColor: '#ffffff',
-                shadowOffset: { width: 0, height: 12 }, shadowRadius: 24, elevation: 12,
-            },
-            deleteBtn: { shadowColor: 'rgba(239,68,68,0.25)', shadowOpacity: 1 },
-            keepBtn: { shadowColor: 'rgba(34,197,94,0.25)', shadowOpacity: 1 },
-            smallBtn: {
-                width: 50, height: 50, borderRadius: 25,
-                backgroundColor: '#ffffff',
-                shadowColor: 'rgba(0,0,0,0.06)', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16, elevation: 4,
-                alignItems: 'center', justifyContent: 'center',
-            },
+    homeHero: { marginTop: 0, marginBottom: 12 },
+    homeHeroTitle: { fontFamily: 'System', fontSize: 34, fontWeight: '800', color: '#1C1C1E', letterSpacing: -1, lineHeight: 40 },
+    homeHeroSub: { fontFamily: 'System', fontSize: 17, color: '#6B7280', marginTop: 8, fontWeight: '500' },
 
-            emptyState: { alignItems: 'center', paddingHorizontal: 40 },
-            emptyEmoji: { fontSize: 64, marginBottom: 16 },
-            emptyTitle: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 32, marginBottom: 8 },
-            emptySub: { fontFamily: 'DMSans_500Medium', color: '#6b7280', fontSize: 15, textAlign: 'center', marginBottom: 28 },
-            goBackBtn: { borderRadius: 100, overflow: 'hidden', width: '100%', shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 16, elevation: 8 },
-            goBackGrad: { paddingVertical: 18, alignItems: 'center' },
-            goBackTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
+    impactCard: { borderRadius: 24, marginBottom: 32, overflow: 'hidden', shadowColor: '#FF6B6B', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 8 },
+    impactContent: { padding: 20 },
+    impactHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+    impactLabel: { fontFamily: 'System', color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+    impactStatsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    impactStatItem: { flex: 1, alignItems: 'center' },
+    impactVal: { fontFamily: 'System', color: '#FFFFFF', fontSize: 24, fontWeight: '800' },
+    impactUnit: { fontSize: 12, fontWeight: '600' },
+    impactSub: { fontFamily: 'System', color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '600', marginTop: 2 },
+    impactDivider: { width: 1, height: 30, backgroundColor: 'rgba(255,255,255,0.2)' },
 
-            ghostHandContainer: { position: 'absolute', width: '100%', height: '100%', zIndex: 1000, elevation: 20, alignItems: 'center', justifyContent: 'center' },
-            ghostHandLabels: { position: 'absolute', width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
-            ghostLabel: { position: 'absolute', width: '100%', alignItems: 'center' },
-            ghostLabelPill: {
-                flexDirection: 'row', alignItems: 'center', gap: 8,
-                paddingHorizontal: 20, paddingVertical: 12, borderRadius: 100,
-                shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 10,
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)'
-            },
-            ghostLabelTxt: { fontFamily: 'Syne_700Bold', color: '#fff', fontSize: 16, letterSpacing: 0.5 },
-            ghostHandCircle: {
-                width: 70, height: 70, borderRadius: 35,
-                backgroundColor: 'rgba(255,107,107,0.95)',
-                alignItems: 'center', justifyContent: 'center',
-                shadowColor: 'rgba(255,107,107,0.5)', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16, elevation: 8,
-                marginTop: 60
-            },
+    mainCta: { width: '100%', height: 64, borderRadius: 32, backgroundColor: '#FF6B6B', alignItems: 'center', justifyContent: 'center', shadowColor: '#FF6B6B', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 16, elevation: 6, marginBottom: 12 },
+    mainCtaText: { fontFamily: 'System', color: '#FFFFFF', fontSize: 18, fontWeight: '700', letterSpacing: 0.5 },
 
-            sortSheet: {
-                overflow: 'hidden',
-                borderTopLeftRadius: 36, borderTopRightRadius: 36,
-                paddingHorizontal: 20, paddingBottom: 20, 
-                paddingTop: 12,
-                maxHeight: H * 0.94,
-                minHeight: H * 0.6,
-                borderTopWidth: 1.5, borderColor: 'rgba(0,0,0,0.05)',
-                backgroundColor: '#fff',
-            },
-            emotionalHook: { fontFamily: 'Syne_700Bold', color: '#1f2937', fontSize: 22, letterSpacing: -0.5, marginTop: 12 },
-            emotionalSub: { fontFamily: 'DMSans_500Medium', color: '#9ca3af', fontSize: 13, marginTop: 4 },
+    catGrid: { flexDirection: 'row', gap: 16 },
+    catCol: { flex: 1, gap: 16 },
+    homeCatCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.03, shadowRadius: 8, elevation: 2, borderWidth: 1, borderColor: '#F1F1F1' },
+    catIcon: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+    homeCatTitle: { fontFamily: 'System', color: '#1C1C1E', fontSize: 18, fontWeight: '700', marginBottom: 4, letterSpacing: -0.2 },
+    homeCatSub: { fontFamily: 'System', color: '#6B7280', fontSize: 13, lineHeight: 16 },
 
-            smartCard: { width: 96, paddingVertical: 18, borderRadius: 24, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.04, shadowRadius: 12, elevation: 3, borderWidth: 1, borderColor: '#f9fafb' },
-            smartIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
-            smartLabel: { fontFamily: 'DMSans_700Bold', fontSize: 11, color: '#4b5563', textAlign: 'center', lineHeight: 14, letterSpacing: 0.1 },
+    homeAd: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderColor: '#F1F1F1', alignItems: 'center', paddingBottom: Platform.OS === 'ios' ? 24 : 12 },
 
-            sectionLabel: { fontFamily: 'DMSans_700Bold', color: '#111827', fontSize: 16, letterSpacing: -0.4 },
-            yearPill: { paddingHorizontal: 24, paddingVertical: 14, borderRadius: 18, backgroundColor: '#f9fafb', borderWidth: 1.5, borderColor: '#f3f4f6' },
-            yearPillActive: { backgroundColor: '#ff6b6b', borderColor: '#ff6b6b', shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 8, transform: [{ scale: 1.05 }] },
-            yearPillTxt: { fontFamily: 'DMSans_700Bold', fontSize: 17, color: '#9ca3af' },
-            yearPillTxtActive: { color: '#fff' },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 30 },
+    rollCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 32, padding: 32, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.2, shadowRadius: 30, elevation: 15 },
+    rollEmoji: { fontSize: 48, marginBottom: 16 },
+    rollTitle: { fontFamily: 'System', fontSize: 24, fontWeight: '800', color: '#1C1C1E', marginBottom: 12 },
+    rollSub: { fontFamily: 'System', fontSize: 16, color: '#6B7280', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+    rollBtn: { width: '100%', height: 56, borderRadius: 28, backgroundColor: '#FF6B6B', alignItems: 'center', justifyContent: 'center' },
+    rollBtnText: { fontFamily: 'System', color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
 
-            entireYearBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,107,107,0.08)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 100 },
-            entireYearTxt: { fontFamily: 'DMSans_700Bold', fontSize: 12, color: '#ff6b6b' },
-            selectFullYearBtn: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: '#ff6b6b', opacity: 0.7 },
+    header: {
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+        paddingHorizontal: 20, paddingBottom: 10, zIndex: 10,
+    },
+    filterPill: {
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20,
+        shadowColor: 'rgba(0,0,0,0.04)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 10, elevation: 2,
+        borderWidth: 1, borderColor: '#F1F1F1',
+    },
+    pillCount: { fontFamily: 'System', color: '#FF6B6B', fontSize: 13, fontWeight: '700', marginLeft: 4 },
+    pillTotal: { fontFamily: 'System', color: '#1C1C1E', fontSize: 13, fontWeight: '700', marginLeft: 4 },
+    pillSeparator: { width: 1, height: 14, backgroundColor: '#F1F1F1', marginHorizontal: 10 },
 
-            monthsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-            monthBtn: { width: (W - 70) / 4, paddingVertical: 14, alignItems: 'center', backgroundColor: '#f9fafb', borderRadius: 16, borderWidth: 1, borderColor: '#f3f4f6' },
-            monthBtnActive: { backgroundColor: '#ff6b6b', borderColor: '#ff6b6b', shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 12, elevation: 5 },
-            monthEmoji: { fontSize: 20, marginBottom: 6 },
-            monthTxt: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: '#374151' },
-            monthTxtActive: { color: '#fff' },
+    cardArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
+    cardContainerWrapper: { width: W * 0.96, height: H * 0.66, position: 'relative' },
+    cardContainer: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', zIndex: 1 },
 
-            mediaToggle: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 14, backgroundColor: '#f3f4f6' },
-            mediaToggleActive: { backgroundColor: '#ff6b6b' },
-            mediaToggleTxt: { fontFamily: 'DMSans_700Bold', fontSize: 13, color: '#6b7280' },
-            mediaToggleTxtActive: { color: '#fff' },
+    emptyState: { flex: 1, width: W, paddingHorizontal: 32, paddingTop: 40, paddingBottom: 60, justifyContent: 'space-between' },
+    emptyContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    emptyIconWrap: { width: 110, height: 110, borderRadius: 55, backgroundColor: '#FFF1F1', alignItems: 'center', justifyContent: 'center', marginBottom: 28, borderWidth: 1, borderColor: '#FFE4E4', shadowColor: '#FF6B6B', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.1, shadowRadius: 20 },
+    emptyTitle: { fontFamily: 'System', fontSize: 32, fontWeight: '800', color: '#1C1C1E', marginBottom: 12, textAlign: 'center', letterSpacing: -0.5 },
+    emptySub: { fontFamily: 'System', fontSize: 17, color: '#6B7280', textAlign: 'center', lineHeight: 24, paddingHorizontal: 10 },
+    emptyActions: { width: '100%', gap: 16, marginTop: 'auto' },
+    dashboardBtn: { width: '100%', height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', shadowColor: '#FF6B6B', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 16, elevation: 6, overflow: 'hidden' },
+    dashboardBtnTxt: { fontFamily: 'System', color: '#FFFFFF', fontSize: 17, fontWeight: '700', letterSpacing: 0.2 },
+    calendarBtn: { width: '100%', height: 64, borderRadius: 32, backgroundColor: '#FFFFFF', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, borderWidth: 1.5, borderColor: '#F1F1F1', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 2 },
+    calendarBtnTxt: { fontFamily: 'System', color: '#FF6B6B', fontSize: 17, fontWeight: '600' },
 
-            globalJumpBtn: { marginTop: 10, borderRadius: 16, overflow: 'hidden', shadowColor: '#6366f1', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
-            globalJumpGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16 },
-            globalJumpTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 16 },
+    sortSheet: {
+        backgroundColor: '#FFFFFF', borderTopLeftRadius: 32, borderTopRightRadius: 32,
+        padding: 24, paddingBottom: 40, width: '100%',
+        shadowColor: '#000', shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 20,
+        borderTopWidth: 1, borderColor: '#F1F1F1'
+    },
+    sortHandle: { width: 40, height: 5, backgroundColor: '#F1F1F1', borderRadius: 3, alignSelf: 'center', marginBottom: 20 },
+    sortTitle: { fontFamily: 'System', fontSize: 20, fontWeight: '700', color: '#1C1C1E', marginBottom: 24, textAlign: 'center' },
+    sortOpt: {
+        flexDirection: 'row', alignItems: 'center', padding: 18, borderRadius: 20,
+        marginBottom: 12, borderWidth: 1.5, borderColor: '#F8F8FA', backgroundColor: '#F8F8FA'
+    },
+    sortIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 16 },
+    sortOptTxt: { fontFamily: 'System', fontSize: 17, color: '#1C1C1E', fontWeight: '500' },
 
-            proTip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff7f7', padding: 20, borderRadius: 24, gap: 16, marginTop: 10, borderWidth: 1, borderColor: 'rgba(255,107,107,0.1)' },
-            proIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, elevation: 2 },
-            proTitle: { fontFamily: 'DMSans_700Bold', fontSize: 15, color: '#1f2937' },
-            proSub: { fontFamily: 'DMSans_400Regular', fontSize: 13, color: '#6b7280', lineHeight: 18, marginTop: 2 },
-            proGoBtn: { backgroundColor: '#ff6b6b', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, shadowColor: '#ff6b6b', shadowOpacity: 0.3, shadowRadius: 8, elevation: 3 },
-            proGoTxt: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: '#fff' },
+    ghostHandContainer: { position: 'absolute', width: '100%', height: '100%', zIndex: 1000, elevation: 20, alignItems: 'center', justifyContent: 'center' },
+    ghostHandCircle: {
+        width: 70, height: 70, borderRadius: 35,
+        backgroundColor: 'rgba(255,107,107,0.95)',
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: 'rgba(255,107,107,0.5)', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16, elevation: 8,
+        marginTop: 60
+    },
 
-            clearTimeMachine: { width: '100%', paddingVertical: 24, alignItems: 'center' },
-            clearTimeMachineTxt: { fontFamily: 'DMSans_700Bold', color: '#9ca3af', fontSize: 14, letterSpacing: 0.5 },
+    settingsOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+    settingsContent: {
+        backgroundColor: '#FFFFFF', borderTopLeftRadius: 32, borderTopRightRadius: 32,
+        paddingHorizontal: 24, paddingTop: 24, paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+        shadowColor: '#000', shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 15,
+    },
+    settingsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+    settingsTitle: { fontFamily: 'System', color: '#1C1C1E', fontSize: 24, fontWeight: '700' },
+    settingsClose: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F8F8FA', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#F1F1F1' },
+    settingsList: { gap: 12 },
+    settingsOption: {
+        flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 20,
+        backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#F1F1F1'
+    },
+    settingsIconWrap: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#F8F8FA', alignItems: 'center', justifyContent: 'center', marginRight: 16, borderWidth: 1, borderColor: '#F1F1F1' },
+    settingsOptionTxt: { flex: 1, fontFamily: 'System', color: '#1C1C1E', fontSize: 17, fontWeight: '500' },
+    settingsStatsBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F8FA', borderRadius: 20, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: '#F1F1F1' },
+    settingsStatItem: { flex: 1, alignItems: 'center' },
+    settingsStatVal: { fontFamily: 'System', color: '#1C1C1E', fontSize: 18, fontWeight: '800' },
+    settingsStatLbl: { fontFamily: 'System', color: '#A1A1AA', fontSize: 11, fontWeight: '600', marginTop: 2, textTransform: 'uppercase' },
+    settingsDivider: { height: 1, backgroundColor: '#F1F1F1', marginVertical: 8 },
+    versionTxt: { fontFamily: 'System', color: '#A1A1AA', fontSize: 13, textAlign: 'center', marginTop: 24 },
 
-            sortHandle: {
-                width: 40, height: 5, borderRadius: 3,
-                backgroundColor: '#e5e7eb',
-                alignSelf: 'center', marginBottom: 24,
-            },
-            sortTitle: { fontFamily: 'Syne_700Bold', color: '#1f2937', fontSize: 24, marginBottom: 20, textAlign: 'center' },
-            sortOpt: { 
-                flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 20, 
-                backgroundColor: '#fff', marginBottom: 12, borderWidth: 1.5, borderColor: '#f3f4f6' 
-            },
-            sortIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 16 },
-            sortOptTxt: { fontFamily: 'DMSans_700Bold', color: '#4b5563', fontSize: 17 },
+    fullPreviewOverlay: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+    fullPreviewContent: {
+        width: W * 0.9, height: H * 0.75, borderRadius: 32, overflow: 'hidden',
+        backgroundColor: '#111', shadowColor: '#000', shadowOffset: { width: 0, height: 20 },
+        shadowOpacity: 0.5, shadowRadius: 40, elevation: 25,
+    },
+    fullPreviewImage: { width: '100%', height: '100%' },
+    fullPreviewHeader: { position: 'absolute', top: 20, right: 20, zIndex: 100 },
+    fullPreviewClose: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+    fullPreviewFooter: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 30, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center' },
+    fullPreviewTitle: { fontFamily: 'System', color: '#fff', fontSize: 24, marginBottom: 4, fontWeight: '700' },
+    fullPreviewSub: { fontFamily: 'System', color: 'rgba(255,255,255,0.7)', fontSize: 14 },
 
-            // Celebration Popup
-            celebOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-            celebCard: {
-                width: '100%', backgroundColor: '#ffffff', borderRadius: 32, paddingHorizontal: 28, paddingTop: 36, paddingBottom: 24,
-                alignItems: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,107,107,0.1)',
-                shadowColor: 'rgba(255,107,107,0.2)', shadowOffset: { width: 0, height: 16 }, shadowOpacity: 1, shadowRadius: 32, elevation: 12,
-            },
-            celebShimmer: {
-                position: 'absolute', top: 0, left: 24, right: 24, height: 1,
-                backgroundColor: 'rgba(255,107,107,0.2)',
-            },
-            celebIconWrap: {
-                width: 80, height: 80, borderRadius: 40,
-                backgroundColor: 'rgba(255,107,107,0.1)',
-                alignItems: 'center', justifyContent: 'center', marginBottom: 20,
-            },
-            orbitContainer: { position: 'absolute', width: 96, height: 96, alignItems: 'center', justifyContent: 'flex-start' },
-            orbitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ff6b6b', shadowColor: '#ff6b6b', shadowOpacity: 0.5, shadowRadius: 6 },
-            celebEmoji: { fontSize: 38 },
-            celebTitle: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 22, marginBottom: 24, textAlign: 'center' },
+    tutBinOverlay: {
+        width: '85%', alignSelf: 'center', backgroundColor: '#1f2937', borderRadius: 32, paddingHorizontal: 28,
+        paddingTop: 36, paddingBottom: 28, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 24 },
+        shadowOpacity: 0.6, shadowRadius: 32, elevation: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)'
+    },
+    tutIconWrap: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(52,199,89,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+    tutBinTitle: { fontFamily: 'System', color: '#fff', fontSize: 26, marginBottom: 12, textAlign: 'center' },
+    tutBinDesc: { fontFamily: 'System', color: '#d1d5db', fontSize: 16, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    tutBinDesc2: { fontFamily: 'System', color: '#9ca3af', fontSize: 14, textAlign: 'center', marginBottom: 28 },
+    tutBinBtn: { width: '100%', backgroundColor: '#fff', paddingVertical: 18, borderRadius: 16, alignItems: 'center' },
+    tutBinBtnText: { fontFamily: 'System', color: '#1f2937', fontSize: 18 },
 
-            celebStorage: { alignItems: 'center', marginBottom: 28 },
-            celebStorageVal: { fontFamily: 'DMSans_700Bold', color: '#ff6b6b', fontSize: 48, letterSpacing: -1.5, lineHeight: 56 },
-            celebStorageUnit: { fontSize: 24, fontFamily: 'DMSans_700Bold' },
-            celebStorageLbl: { fontFamily: 'DMSans_700Bold', color: '#9ca3af', fontSize: 13, letterSpacing: 0.5, textTransform: 'uppercase', marginTop: -2 },
+    calTutCard: {
+        width: '94%', alignSelf: 'center', backgroundColor: '#FFFFFF', borderRadius: 28,
+        paddingHorizontal: 24, paddingTop: 32, paddingBottom: 24, alignItems: 'center',
+        borderWidth: 1, borderColor: '#F1F1F1',
+        shadowColor: 'rgba(0,0,0,0.02)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 10, elevation: 2,
+    },
+    calTutIconWrap: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#FFF1F1', alignItems: 'center', justifyContent: 'center', marginBottom: 18, borderWidth: 1, borderColor: '#F1F1F1' },
+    calTutTitle: { fontFamily: 'System', color: '#1C1C1E', fontSize: 24, fontWeight: '700', marginBottom: 10, textAlign: 'center' },
+    calTutDesc: { fontFamily: 'System', color: '#6B7280', fontSize: 16, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+    calTutBtn: { width: '80%', backgroundColor: '#FF6B6B', paddingVertical: 14, borderRadius: 100, alignItems: 'center' },
+    calTutBtnText: { fontFamily: 'System', color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 
-            celebStatsCol: { width: '100%', gap: 10, marginBottom: 24 },
-            celebStatRow: {
-                flexDirection: 'row', alignItems: 'center',
-                paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16,
-                borderWidth: 1,
-            },
-            celebStatIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-            celebStatNum: { fontFamily: 'DMSans_700Bold', fontSize: 24, paddingRight: 8 },
-            celebStatLabel: { fontFamily: 'DMSans_500Medium', color: '#4b5563', fontSize: 16 },
+    globalJumpBtn: { width: '100%', borderRadius: 16, overflow: 'hidden', marginTop: 24, shadowColor: '#FF6B6B', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
+    globalJumpGrad: { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
+    globalJumpTxt: { fontFamily: 'System', color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
 
-            progressWrap: { width: '100%', marginBottom: 32 },
-            progressHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-            progressLbl: { fontFamily: 'DMSans_700Bold', color: '#9ca3af', fontSize: 12, textTransform: 'uppercase' },
-            progressNum: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 14 },
-            progressTrack: { width: '100%', height: 6, backgroundColor: '#f3f4f6', borderRadius: 3, overflow: 'hidden' },
-            progressFill: { height: '100%', backgroundColor: '#ff6b6b', borderRadius: 3 },
+    headerIconBg: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2, borderWidth: 1, borderColor: '#F1F1F1' },
+    headerPillContainer: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+    swipePill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF1F1', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#FFE4E4', gap: 6 },
+    swipePillTxt: { fontFamily: 'System', color: '#FF6B6B', fontSize: 13, fontWeight: '800' },
+    statsPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#F1F1F1', gap: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+    statsPillTxt: { fontFamily: 'System', color: '#1C1C1E', fontSize: 13, fontWeight: '800' },
+    pillDivider: { width: 1, height: 12, backgroundColor: '#F1F1F1', marginHorizontal: 2 },
 
-            celebPrimaryBtn: { width: '100%', borderRadius: 100, overflow: 'hidden', marginBottom: 12, shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 8 },
-            celebPrimaryGrad: { paddingVertical: 18, alignItems: 'center', position: 'relative' },
-            celebGlossTop: { position: 'absolute', top: 0, left: '10%', right: '10%', height: '40%', backgroundColor: 'rgba(255,255,255,0.3)', borderBottomLeftRadius: 100, borderBottomRightRadius: 100 },
-            celebPrimaryTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
-            celebSecBtn: { paddingVertical: 12, paddingHorizontal: 24 },
-            celebSecTxt: { fontFamily: 'DMSans_700Bold', color: '#9ca3af', fontSize: 15 },
+    actions: {
+        position: 'absolute', left: 0, right: 0,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        gap: 16, paddingHorizontal: 20, zIndex: 100
+    },
+    mainBtn: {
+        width: 62, height: 62, borderRadius: 31,
+        backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1, shadowRadius: 10, elevation: 4,
+        borderWidth: 1, borderColor: '#F1F1F1'
+    },
+    smallBtn: {
+        width: 44, height: 44, borderRadius: 22,
+        backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05, shadowRadius: 6, elevation: 2,
+        borderWidth: 1, borderColor: '#F1F1F1'
+    },
+});
 
-            /* —————————————————— Full Preview —————————————————— */
-            fullPreviewOverlay: {
-                flex: 1,
-                backgroundColor: '#000',
-                justifyContent: 'center',
-                alignItems: 'center',
-            },
-            fullPreviewContent: {
-                width: W * 0.9,
-                height: H * 0.75,
-                borderRadius: 32,
-                overflow: 'hidden',
-                backgroundColor: '#111',
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 20 },
-                shadowOpacity: 0.5,
-                shadowRadius: 40,
-                elevation: 25,
-            },
-            fullPreviewImage: {
-                width: '100%',
-                height: '100%',
-            },
-            fullPreviewHeader: {
-                position: 'absolute',
-                top: 20,
-                right: 20,
-                zIndex: 100,
-            },
-            fullPreviewClose: {
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
-            },
-            fullPreviewFooter: {
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                padding: 30,
-                backgroundColor: 'rgba(0,0,0,0.5)',
-                alignItems: 'center',
-            },
-            fullPreviewTitle: {
-                fontFamily: 'Syne_700Bold',
-                color: '#fff',
-                fontSize: 24,
-                marginBottom: 4,
-            },
-            fullPreviewSub: {
-                fontFamily: 'DMSans_500Medium',
-                color: 'rgba(255,255,255,0.7)',
-                fontSize: 14,
-            },
-            
-            /* —————————————————— Tutorial Step 2 Styles —————————————————— */
-            tutBinOverlay: {
-                width: '85%',
-                alignSelf: 'center',
-                backgroundColor: '#1f2937',
-                borderRadius: 32,
-                paddingHorizontal: 28,
-                paddingTop: 36,
-                paddingBottom: 28,
-                alignItems: 'center',
-                shadowColor: '#000', shadowOffset: { width: 0, height: 24 }, shadowOpacity: 0.6, shadowRadius: 32, elevation: 20,
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)'
-            },
-            tutIconWrap: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(52,199,89,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-            tutBinTitle: { fontFamily: 'Syne_700Bold', color: '#fff', fontSize: 26, marginBottom: 12, textAlign: 'center' },
-            tutBinDesc: { fontFamily: 'DMSans_500Medium', color: '#d1d5db', fontSize: 16, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-            tutBinDesc2: { fontFamily: 'DMSans_500Medium', color: '#9ca3af', fontSize: 14, textAlign: 'center', marginBottom: 28 },
-            tutBinBtn: { width: '100%', backgroundColor: '#fff', paddingVertical: 18, borderRadius: 16, alignItems: 'center' },
-            tutBinBtnText: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 18 },
-            tutArrowContainer: { position: 'absolute', bottom: Platform.OS === 'ios' ? 90 : 70, right: W * 0.2, alignItems: 'center' },
-            tutArrow: { fontSize: 64, color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: {width: 0, height: 4}, textShadowRadius: 8 },
-
-            /* —————————————————— Calendar Tutorial (Indigo Glass) —————————————————— */
-            calTutCard: {
-                width: '94%', alignSelf: 'center', backgroundColor: 'rgba(99,102,241,0.06)', borderRadius: 28,
-                paddingHorizontal: 24, paddingTop: 32, paddingBottom: 24, alignItems: 'center',
-                borderWidth: 1.5, borderColor: 'rgba(99,102,241,0.1)',
-            },
-            calTutIconWrap: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', marginBottom: 18, shadowColor: '#6366f1', shadowOpacity: 0.1, shadowRadius: 10, elevation: 3 },
-            calTutTitle: { fontFamily: 'Syne_700Bold', color: '#1f2937', fontSize: 24, marginBottom: 10, textAlign: 'center' },
-            calTutDesc: { fontFamily: 'DMSans_500Medium', color: '#6b7280', fontSize: 16, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
-            calTutBtn: { width: '80%', backgroundColor: '#6366f1', paddingVertical: 14, borderRadius: 100, alignItems: 'center', shadowColor: '#6366f1', shadowOpacity: 0.2, shadowRadius: 10, elevation: 4 },
-            calTutBtnText: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 16 },
-        });

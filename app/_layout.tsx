@@ -14,20 +14,20 @@ import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
 import Constants from 'expo-constants';
 import * as SplashScreen from 'expo-splash-screen';
-import { useFonts } from 'expo-font';
-import { Syne_700Bold, Syne_800ExtraBold } from '@expo-google-fonts/syne';
-import { DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
+import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
 import { initAds } from '../lib/ads';
+import { IAPProvider } from '../contexts/IAPContext';
 import { initAnalytics, logEvent, TrackEvents } from '../lib/analytics';
 import { requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
-import * as Sentry from '@sentry/react-native';
+import { 
+    registerForPushNotificationsAsync, 
+    addNotificationReceivedListener, 
+    addNotificationResponseReceivedListener 
+} from '../lib/notifications';
+import * as Notifications from 'expo-notifications';
+import { useRef } from 'react';
 
-// Initialize Sentry ideally outside the component
-Sentry.init({
-    dsn: "https://a258b128c003ed4723d0d5ab29e15ed2@o4511228081340416.ingest.us.sentry.io/4511228088877056",
-    debug: __DEV__,
-    enableNative: true,
-});
+// Sentry disabled for stability on RN 0.81
 
 function RootLayout() {
     const router = useRouter();
@@ -35,10 +35,11 @@ function RootLayout() {
     const [isReady, setIsReady] = useState(false);
     const [splashHidden, setSplashHidden] = useState(false);
     const [isOffline, setIsOffline] = useState(false);
+    const [expoPushToken, setExpoPushToken] = useState<string | undefined>('');
+    const notificationListener = useRef<Notifications.Subscription>();
+    const responseListener = useRef<Notifications.Subscription>();
 
     const [fontsLoaded, fontError] = useFonts({
-        Syne_700Bold,
-        Syne_800ExtraBold,
         DMSans_400Regular,
         DMSans_500Medium,
         DMSans_700Bold,
@@ -78,7 +79,7 @@ function RootLayout() {
         async function checkForAppUpdates() {
             try {
                 if (Platform.OS !== 'ios') return;
-                const bundleId = Constants.expoConfig?.ios?.bundleIdentifier ?? 'com.swipetowipe.photocleaner';
+                const bundleId = Constants.expoConfig?.ios?.bundleIdentifier ?? 'com.purvichopra.swipetowipe';
                 const response = await fetch(`https://itunes.apple.com/lookup?bundleId=${bundleId}&t=${Date.now()}`);
                 const data = await response.json();
 
@@ -122,6 +123,30 @@ function RootLayout() {
         return () => unsubscribeNet();
     }, []);
 
+    // 2. Push Notifications Setup
+    useEffect(() => {
+        registerForPushNotificationsAsync().then(token => {
+            if (token) setExpoPushToken(token);
+        });
+
+        notificationListener.current = addNotificationReceivedListener(notification => {
+            if (__DEV__) console.log('Notification Received:', notification);
+        });
+
+        responseListener.current = addNotificationResponseReceivedListener(response => {
+            if (__DEV__) console.log('Notification Tapped:', response);
+        });
+
+        return () => {
+            if (notificationListener.current) {
+                notificationListener.current.remove();
+            }
+            if (responseListener.current) {
+                responseListener.current.remove();
+            }
+        };
+    }, []);
+
     // Navigation + Splash Logic
     useEffect(() => {
         async function checkFlow() {
@@ -139,11 +164,12 @@ function RootLayout() {
                 if (completed !== 'true') {
                     if (segment !== 'onboarding') router.replace('/onboarding');
                 } else if (!token) {
-                    // No token after onboarding — onboarding did not complete correctly.
-                    // Re-run onboarding so the guest token gets set.
-                    router.replace('/onboarding');
+                    // User has completed onboarding but has no token (logged out or guest intent to upgrade).
+                    if (segment !== '(auth)') router.replace('/login');
+                } else if (permissions !== 'true') {
+                    if (segment !== 'permissions') router.replace('/permissions');
                 } else {
-                    // Token exists (guest or real). Go to main app.
+                    // Token exists + permissions granted. Go to main app.
                     if (segment !== '(tabs)' && segment !== 'swipe') router.replace('/(tabs)');
                 }
             } catch (e) {
@@ -162,50 +188,58 @@ function RootLayout() {
     }, [isReady, fontsLoaded, fontError, segments]);
 
     // CRITICAL: Never return null from root layout — return a blank loading view instead
-    if (!isReady || (!fontsLoaded && !fontError)) {
+    // We now allow booting even if fonts are still loading to prevent "stuck on logo" issues
+    if (!isReady) {
+        if (__DEV__) console.log('[RootLayout] Waiting for isReady...');
         return (
             <View style={{ flex: 1, backgroundColor: '#fff0f5' }} />
         );
     }
 
+    if (__DEV__ && !fontsLoaded && !fontError) {
+        console.log('[RootLayout] Fonts still loading, but booting anyway...');
+    }
+
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
             <SafeAreaProvider>
-                <PhotoProvider>
-                    <Stack screenOptions={{ headerShown: false }}>
-                        <Stack.Screen name="onboarding" />
-                        <Stack.Screen name="(auth)/login" />
-                        <Stack.Screen name="(auth)/signup" />
-                        <Stack.Screen name="permissions" />
-                        <Stack.Screen name="(tabs)" />
-                        <Stack.Screen name="swipe" options={{ presentation: 'fullScreenModal' }} />
-                    </Stack>
+                <IAPProvider>
+                    <PhotoProvider>
+                        <Stack screenOptions={{ headerShown: false }}>
+                            <Stack.Screen name="onboarding" />
+                            <Stack.Screen name="(auth)/login" />
+                            <Stack.Screen name="(auth)/signup" />
+                            <Stack.Screen name="permissions" />
+                            <Stack.Screen name="(tabs)" />
+                            <Stack.Screen name="swipe" options={{ presentation: 'fullScreenModal' }} />
+                        </Stack>
 
-                    {isOffline && (
-                        <View style={s.offlineOverlay}>
-                            <Ionicons name="wifi-outline" size={64} color="#ef4444" style={{ marginBottom: 20 }} />
-                            <Text style={s.offlineTitle}>Connection Lost</Text>
-                            <Text style={s.offlineSubtitle}>
-                                An internet connection is recommended for the best experience.
-                            </Text>
-                            <Pressable 
-                                style={{ marginTop: 30, paddingVertical: 12, paddingHorizontal: 24, backgroundColor: '#f3f4f6', borderRadius: 12 }}
-                                onPress={() => setIsOffline(false)}
-                            >
-                                <Text style={{ fontFamily: 'DMSans_700Bold', color: '#4b5563' }}>Try Anyway</Text>
-                            </Pressable>
-                        </View>
-                    )}
+                        {isOffline && (
+                            <View style={s.offlineOverlay}>
+                                <Ionicons name="wifi-outline" size={64} color="#ef4444" style={{ marginBottom: 20 }} />
+                                <Text style={s.offlineTitle}>Connection Lost</Text>
+                                <Text style={s.offlineSubtitle}>
+                                    An internet connection is recommended for the best experience.
+                                </Text>
+                                <Pressable 
+                                    style={{ marginTop: 30, paddingVertical: 12, paddingHorizontal: 24, backgroundColor: '#f3f4f6', borderRadius: 12 }}
+                                    onPress={() => setIsOffline(false)}
+                                >
+                                    <Text style={{ fontFamily: 'DMSans_700Bold', color: '#4b5563' }}>Try Anyway</Text>
+                                </Pressable>
+                            </View>
+                        )}
 
-                    <StatusBar style="dark" />
-                </PhotoProvider>
+                        <StatusBar style="dark" />
+                    </PhotoProvider>
+                </IAPProvider>
             </SafeAreaProvider>
         </GestureHandlerRootView>
     );
 }
 
-// Wrap with Sentry
-export default Sentry.wrap(RootLayout);
+// export default Sentry.wrap(RootLayout);
+export default RootLayout;
 
 const s = StyleSheet.create({
     offlineOverlay: {
@@ -217,6 +251,6 @@ const s = StyleSheet.create({
         alignItems: 'center',
         padding: 30,
     },
-    offlineTitle: { fontFamily: 'Syne_800ExtraBold', fontSize: 26, color: '#1f2937', marginBottom: 12, textAlign: 'center' },
+    offlineTitle: { fontFamily: 'DMSans_700Bold', fontSize: 26, color: '#1f2937', marginBottom: 12, textAlign: 'center' },
     offlineSubtitle: { fontFamily: 'DMSans_500Medium', fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24 },
 });

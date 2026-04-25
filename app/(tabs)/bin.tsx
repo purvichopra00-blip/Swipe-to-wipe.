@@ -18,16 +18,19 @@ import { Easing } from 'react-native-reanimated';
 import Animated, { Layout, FadeIn, FadeOut, FadeInDown, useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 import { AUTH_TOKEN_KEY } from '../(auth)/login';
 import { auth } from '../../lib/firebase';
 import { deleteUser } from 'firebase/auth';
 import { ONBOARDING_COMPLETED_KEY } from '../onboarding';
 import { PERMISSIONS_GRANTED_KEY } from '../permissions';
 import { AppBannerAd, BannerAdSize, AdUnits } from '../../lib/ads';
+import { useIAP } from '../../contexts/IAPContext';
 
 const { width: W } = Dimensions.get('window');
 const COL = 3;
-const ITEM = (W - 32 - (COL - 1) * 3) / COL;
+const SPACING = 12;
+const ITEM = (W - 40 - (COL - 1) * SPACING) / COL;
 const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -59,10 +62,21 @@ export default function BinScreen() {
         totalClearedBytes, totalDeletedPhotos, sessionStats, loadCategoryStats,
         deepReset, isGuest, setUserToken, setShowIntro, endSession
     } = usePhotos();
+    const { isPro } = useIAP();
     const [isDeleting, setIsDeleting] = useState(false);
-    const [isSettingsVisible, setIsSettingsVisible] = useState(false);
     const [previewPhoto, setPreviewPhoto] = useState<BinPhoto | null>(null);
     const [previewVideoUri, setPreviewVideoUri] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    const toggleSelection = useCallback((id: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
 
     const fullPlayer = useVideoPlayer(previewPhoto && previewPhoto.mediaType === 'video' ? (previewVideoUri || previewPhoto.url) : null, (p) => {
         p.loop = true;
@@ -70,13 +84,16 @@ export default function BinScreen() {
     });
 
     useEffect(() => {
+        let active = true;
         if (previewPhoto && previewPhoto.mediaType === 'video') {
-            MediaLibrary.getAssetInfoAsync(previewPhoto.id).then(info => {
-                setPreviewVideoUri(info.localUri || info.uri);
-            });
+            const photoId = previewPhoto.id;
+            MediaLibrary.getAssetInfoAsync(photoId).then(info => {
+                if (active) setPreviewVideoUri(info.localUri || info.uri);
+            }).catch(() => {});
         } else {
             setPreviewVideoUri(null);
         }
+        return () => { active = false; };
     }, [previewPhoto]);
 
     // Initial Bin Tutorial 
@@ -84,7 +101,8 @@ export default function BinScreen() {
     const [showBinTutorial, setShowBinTutorial] = useState(false);
 
     React.useEffect(() => {
-        if (binPhotos.length > 0) {
+        // Bin Tutorial Disabled as per request
+        if (false && binPhotos.length > 0) {
             AsyncStorage.getItem(BIN_TUTORIAL_KEY).then(res => {
                 if (!res) {
                     setShowBinTutorial(true);
@@ -106,11 +124,13 @@ export default function BinScreen() {
 
     // Start orbit animation loop
     React.useEffect(() => {
-        RNAnimated.loop(
+        const anim = RNAnimated.loop(
             RNAnimated.timing(orbitSpin, {
                 toValue: 1, duration: 4000, easing: Easing.linear as any, useNativeDriver: true
             })
-        ).start();
+        );
+        anim.start();
+        return () => anim.stop();
     }, []);
 
     const showCelebration = (count: number, bytes: number) => {
@@ -141,27 +161,43 @@ export default function BinScreen() {
         return Math.max(0, Math.ceil((SEVEN_DAYS - (Date.now() - d)) / 86400000));
     };
 
-    const handleDeleteAll = useCallback(() => {
+    const handleMainDelete = useCallback(() => {
+        const isSelectionMode = selectedIds.size > 0;
+        const count = isSelectionMode ? selectedIds.size : binPhotos.length;
+        
         Alert.alert(
-            'Delete All Permanently?',
-            `Remove all ${binPhotos.length} items from your device. This cannot be undone.`,
+            isSelectionMode ? 'Delete Selected?' : 'Delete All Permanently?',
+            `Remove ${count} items from your device. This cannot be undone.`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: 'Delete All', style: 'destructive',
+                    text: 'Delete', style: 'destructive',
                     onPress: async () => {
                         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
                         setIsDeleting(true);
-                        const count = binPhotos.length;
-                        const bytes = binStorageBytes;
-                        await commitDeletions();
+                        
+                        let success = false;
+                        let bytesValue = 0;
+                        if (isSelectionMode) {
+                            bytesValue = Array.from(selectedIds).reduce((acc, id) => {
+                                const p = binPhotos.find(b => b.id === id);
+                                return acc + (p?.fileSize || 0);
+                            }, 0);
+                            success = await commitDeletions(Array.from(selectedIds));
+                            if (success) setSelectedIds(new Set());
+                        } else {
+                            bytesValue = binStorageBytes;
+                            success = await commitDeletions();
+                        }
                         setIsDeleting(false);
-                        showCelebration(count, bytes);
+                        if (success) {
+                            showCelebration(count, bytesValue);
+                        }
                     },
                 },
             ]
         );
-    }, [binPhotos.length, commitDeletions]);
+    }, [binPhotos, selectedIds, commitDeletions, binStorageBytes]);
 
     const handleRestore = useCallback(async (photo: BinPhoto) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -185,51 +221,13 @@ export default function BinScreen() {
         ]);
     }, [commitDeletions]);
 
-    const handleSignOut = async () => {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        setShowIntro(true);
-        endSession();
-        await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
-        router.replace('/login');
-    };
 
-    const handleDeleteAccount = async () => {
-        Alert.alert(
-            'Delete Account Permanently?',
-            'This will permanently delete your account, saved preferences, and all app data. This action cannot be undone.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete Permanently',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            const user = auth.currentUser;
-                            if (user) {
-                                await deleteUser(user);
-                            }
-                             // Deep Wipe: Clear all local data and preferences
-                             await deepReset();
-                             
-                             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                             router.replace('/login');
-                        } catch (err: any) {
-                            console.error('Delete account error', err);
-                            if (err.code === 'auth/requires-recent-login') {
-                                Alert.alert('Security Check', 'For security reasons, please log out and log back in before deleting your account.');
-                            } else {
-                                Alert.alert('Error', 'Failed to delete account. Please try again.');
-                            }
-                        }
-                    }
-                }
-            ]
-        );
-    };
 
     const renderItem = ({ item }: { item: BinPhoto }) => {
         const days = daysLeft(item.deletedAt);
         const urgent = days <= 1;
+        const isSelected = selectedIds.has(item.id);
+        
         return (
             <Animated.View
                 layout={Layout.springify().damping(20).stiffness(150)}
@@ -243,18 +241,21 @@ export default function BinScreen() {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         setPreviewPhoto(item);
                     }}
-                    onPress={() => handleRestore(item)}
+                    onPress={() => toggleSelection(item.id)}
                 >
                     <Image 
                         source={item.url || 'https://via.placeholder.com/150'} 
-                        style={styles.thumb} 
+                        style={[styles.thumb, isSelected && { opacity: 0.8 }]} 
                         contentFit="cover" 
                     />
-                    {/* Gradient overlay */}
-                    <LinearGradient colors={['transparent', 'rgba(0,0,0,0.75)']} style={styles.thumbGrad} />
+                    {/* Select Circle */}
+                    <View style={{ position: 'absolute', top: 8, left: 8, width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: isSelected ? 'transparent' : '#fff', backgroundColor: isSelected ? '#FF6B6B' : 'rgba(0,0,0,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                        {isSelected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                    </View>
+                    
                     {/* Days badge */}
-                    <View style={[styles.daysBadge, urgent && styles.daysBadgeRed]}>
-                        <Text style={[styles.daysTxt, urgent && { color: '#fff' }]}>{days}d</Text>
+                    <View style={[styles.daysBadge, { backgroundColor: urgent ? '#FF3B30' : 'rgba(0,0,0,0.5)' }]}>
+                        <Text style={styles.daysTxt}>{days}d</Text>
                     </View>
                 </Pressable>
             </Animated.View>
@@ -276,70 +277,48 @@ export default function BinScreen() {
             <StatusBar barStyle="dark-content" />
             <LinearGradient colors={['#fff0f5', '#ffffff', '#fff0f5']} style={StyleSheet.absoluteFill} />
 
-            {/* Header */}
-            <View style={[styles.header, { paddingTop: Math.max(insets.top, 20), flexDirection: 'column', alignItems: 'flex-start', gap: 10 }]}>
-                {/* Row 1: Title and Badges */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' }}>
-                    {/* Failsafe Hidden Tutorial Button on the Title string */}
-                    <ScalePress onPress={() => setShowBinTutorial(true)}>
-                        <Text style={styles.title}>Review Bin</Text>
-                    </ScalePress>
-                    <View style={styles.statBadge}>
-                        <Ionicons name="trash" size={12} color="#f43f5e" />
-                        <Text style={styles.statBadgeTxt}>
-                            <Text style={{ fontWeight: '800', color: '#f43f5e' }}>{totalDeletedPhotos || 0}</Text> deleted
-                        </Text>
-                    </View>
-                    <View style={[styles.statBadge, { borderColor: '#f59e0b25' }]}>
-                        <Ionicons name="flash" size={12} color="#f59e0b" />
-                        <Text style={styles.statBadgeTxt}>
-                            <Text style={{ fontWeight: '800', color: '#1f2937' }}>{(totalClearedBytes / 1024 / 1024).toFixed(1)}</Text> MB cleared
-                        </Text>
-                    </View>
-                </View>
-
-                {/* Row 2: Subtitle */}
-                <Text style={styles.subtitle}>
-                    {binPhotos.length} items · {fmt(binStorageBytes)} to free
-                </Text>
-
-                {/* Row 3: Utility Icons */}
-                <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
-                    <ScalePress 
-                        style={styles.headerIconBtn} 
-                        onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            loadCategoryStats();
-                        }}
-                    >
-                        <Ionicons name="refresh-outline" size={20} color="#9ca3af" />
-                    </ScalePress>
-                    <ScalePress 
-                        style={[styles.headerIconBtn, { borderColor: '#f3f4f6' }]}
+            {/* Header: Home Left, Title Center, Empty Right */}
+            <View style={[styles.header, { paddingTop: Math.max(insets.top, 16), height: 72 + insets.top, paddingHorizontal: 20 }]}>
+                <View style={{ flex: 1, alignItems: 'flex-start' }}>
+                    <ScalePress
+                        style={styles.headerIconBtn}
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                            setIsSettingsVisible(true);
+                            router.back();
                         }}
                     >
-                        <Ionicons name="settings-outline" size={20} color="#6366f1" />
+                        <Ionicons name="home" size={20} color="#1C1C1E" />
                     </ScalePress>
+                </View>
+
+                <View style={{ flex: 4, alignItems: 'center' }}>
+                    <ScalePress onPress={() => setShowBinTutorial(true)}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.title}>Review Bin</Text>
+                            <Ionicons name="search" size={18} color="#A1A1AA" />
+                        </View>
+                    </ScalePress>
+                    <Text style={styles.subtitle}>{binPhotos.length.toLocaleString()} items · {fmt(binStorageBytes)}</Text>
+                </View>
+
+                <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                    {/* Placeholder for balance */}
+                    <View style={{ width: 44 }} />
                 </View>
             </View>
 
-            {/* Storage freed pill */}
-            {binPhotos.length > 0 ? (
-                <View style={styles.storagePill}>
-                    <Ionicons name="sparkles-outline" size={14} color="#a78bfa" />
-                    <Text style={styles.storagePillTxt}>
-                        Free up <Text style={{ color: '#a78bfa', fontWeight: '800' }}>{fmt(binStorageBytes)}</Text> by deleting all
-                    </Text>
+            {/* Banner: Brand Awareness */}
+            <View style={{ marginHorizontal: 20, marginBottom: 20 }}>
+                <View style={{ backgroundColor: '#FFFFFF', borderRadius: 20, padding: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#EDEDED' }}>
+                    <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: '#FFF1F1', alignItems: 'center', justifyContent: 'center', marginRight: 16 }}>
+                        <Ionicons name="shield-checkmark" size={22} color="#FF6B6B" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={{ fontFamily: 'System', fontSize: 15, fontWeight: '700', color: '#1C1C1E', marginBottom: 2 }}>Safe in the Bin</Text>
+                        <Text style={{ fontFamily: 'System', fontSize: 13, color: '#6B7280' }}>Items here will automatically clear completely after 7 days.</Text>
+                    </View>
                 </View>
-            ) : null}
-
-            {/* Hint */}
-            {binPhotos.length > 0 ? (
-                <Text style={styles.hint}>Tap to restore · Long press to delete permanently</Text>
-            ) : null}
+            </View>
 
             {/* Grid */}
             <FlatList
@@ -349,7 +328,7 @@ export default function BinScreen() {
                 numColumns={3}
                 contentContainerStyle={[
                     styles.grid,
-                    { paddingBottom: Math.max(insets.bottom, 20) + 320 }, 
+                    { paddingBottom: Math.max(insets.bottom, 24) + 350 }, 
                     binPhotos.length === 0 && { flex: 1, justifyContent: 'center', paddingBottom: 0 },
                 ]}
                 ListEmptyComponent={<EmptyState />}
@@ -357,33 +336,49 @@ export default function BinScreen() {
                 columnWrapperStyle={binPhotos.length > 0 ? styles.row : undefined}
             />
 
-            {/* Footer Buttons */}
+            {/* Footer Buttons - Adjusted for Ads */}
             {binPhotos.length > 0 && (
-                <View style={[styles.footer, { bottom: Math.max(insets.bottom, 20) + 144 }]}>
-                    <ScalePress
-                        style={styles.recoverBtn}
-                        onPress={async () => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                            for (const p of binPhotos) await restoreFromBin(p.id);
-                        }}
-                    >
-                        <Ionicons name="arrow-undo" size={18} color="#f43f5e" />
-                        <Text style={styles.recoverTxt}>Recover All</Text>
-                    </ScalePress>
-
+                <View style={[styles.footer, { bottom: Math.max(insets.bottom, 20) + (isPro ? 12 : 72) }]}>
                     <ScalePress
                         style={styles.deleteBtn}
-                        onPress={handleDeleteAll}
+                        onPress={handleMainDelete}
                         disabled={isDeleting}
                     >
                         {isDeleting ? (
                             <ActivityIndicator size="small" color="#fff" />
                         ) : (
                             <>
-                                <Ionicons name="trash" size={18} color="#fff" />
-                                <Text style={styles.deleteTxt}>Delete All</Text>
+                                <Ionicons name="trash-outline" size={18} color="#fff" />
+                                <Text style={styles.deleteTxt}>
+                                    {selectedIds.size > 0 
+                                        ? `Delete Selected · ${fmt(Array.from(selectedIds).reduce((acc, id) => acc + (binPhotos.find(b => b.id === id)?.fileSize || 0), 0))}` 
+                                        : `Delete All · ${fmt(binStorageBytes)}`}
+                                </Text>
                             </>
                         )}
+                    </ScalePress>
+                    
+                    <ScalePress
+                        style={styles.recoverBtn}
+                        onPress={async () => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            if (selectedIds.size > 0) {
+                                for (const id of selectedIds) await restoreFromBin(id);
+                                setSelectedIds(new Set());
+                            } else {
+                                // Restore ALL functionality
+                                Alert.alert('Restore All?', `Bring back all ${binPhotos.length} items to your gallery?`, [
+                                    { text: 'Cancel', style: 'cancel' },
+                                    { text: 'Restore All', onPress: async () => {
+                                        for (const p of [...binPhotos]) await restoreFromBin(p.id);
+                                    }}
+                                ]);
+                            }
+                        }}
+                    >
+                        <Text style={styles.recoverTxt}>
+                            {selectedIds.size > 0 ? `Restore Selected (${selectedIds.size})` : 'Restore All Items'}
+                        </Text>
                     </ScalePress>
                 </View>
             )}
@@ -447,103 +442,7 @@ export default function BinScreen() {
                 </Pressable>
             </Modal>
 
-            {/* Settings Modal */}
-            <Modal
-                visible={isSettingsVisible}
-                animationType="fade"
-                transparent={true}
-                onRequestClose={() => setIsSettingsVisible(false)}
-            >
-                <Pressable 
-                    style={styles.settingsOverlay} 
-                    onPress={() => setIsSettingsVisible(false)}
-                >
-                    <Animated.View 
-                        entering={FadeIn.duration(200)} 
-                        exiting={FadeOut.duration(200)}
-                        style={styles.settingsContent}
-                    >
-                        <View style={styles.settingsHeader}>
-                            <Text style={styles.settingsTitle}>Settings</Text>
-                            <Pressable onPress={() => setIsSettingsVisible(false)} style={styles.settingsClose}>
-                                <Ionicons name="close" size={20} color="#9ca3af" />
-                            </Pressable>
-                        </View>
 
-                        <View style={styles.settingsList}>
-                            <ScalePress 
-                                style={styles.settingsOption}
-                                onPress={() => {
-                                    setIsSettingsVisible(false);
-                                    if (isGuest) {
-                                        // "Log In" for Guest = Sign Out + Go to Login
-                                        setUserToken(null);
-                                        AsyncStorage.removeItem(AUTH_TOKEN_KEY);
-                                        router.replace('/login');
-                                    } else {
-                                        handleSignOut();
-                                    }
-                                }}
-                            >
-                                <View style={[styles.settingsIconWrap, { backgroundColor: isGuest ? 'rgba(52,211,153,0.08)' : 'rgba(99,102,241,0.08)' }]}>
-                                    <Ionicons name={isGuest ? "log-in-outline" : "log-out-outline"} size={22} color={isGuest ? "#10b981" : "#6366f1"} />
-                                </View>
-                                <Text style={styles.settingsOptionTxt}>{isGuest ? "Log In (Upgrade Account)" : "Sign Out"}</Text>
-                                <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-                            </ScalePress>
-
-                             <ScalePress 
-                                style={styles.settingsOption}
-                                onPress={() => {
-                                    setIsSettingsVisible(false);
-                                    // Use existing handleDeleteAll to trigger the reset
-                                    // But actually we want a FULL app reset here
-                                    Alert.alert(
-                                        'Reset App?',
-                                        'This will clear all your swipe history and start fresh. Your photos on device will NOT be deleted.',
-                                        [
-                                            { text: 'Cancel', style: 'cancel' },
-                                            { 
-                                                text: 'Reset Everything', 
-                                                style: 'destructive',
-                                                onPress: async () => {
-                                                    await deepReset();
-                                                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                                                    setIsSettingsVisible(false);
-                                                }
-                                            }
-                                        ]
-                                    );
-                                }}
-                            >
-                                <View style={[styles.settingsIconWrap, { backgroundColor: 'rgba(52,211,153,0.08)' }]}>
-                                    <Ionicons name="refresh-circle-outline" size={22} color="#10b981" />
-                                </View>
-                                <Text style={styles.settingsOptionTxt}>Deep Reset App</Text>
-                                <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-                            </ScalePress>
-
-                            <View style={styles.settingsDivider} />
-
-                            <ScalePress 
-                                style={styles.settingsOption}
-                                onPress={() => {
-                                    setIsSettingsVisible(false);
-                                    handleDeleteAccount();
-                                }}
-                            >
-                                <View style={[styles.settingsIconWrap, { backgroundColor: 'rgba(239,68,68,0.08)' }]}>
-                                    <Ionicons name="trash-outline" size={22} color="#ef4444" />
-                                </View>
-                                <Text style={[styles.settingsOptionTxt, { color: '#ef4444' }]}>Delete Account</Text>
-                                <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-                            </ScalePress>
-                        </View>
-                        
-                        <Text style={styles.versionTxt}>Version 1.0.0 (Production Ready)</Text>
-                    </Animated.View>
-                </Pressable>
-            </Modal>
 
             {/* Full Preview Modal */}
             <Modal
@@ -618,13 +517,13 @@ export default function BinScreen() {
                         </View>
                         <Text style={styles.tutBinTitle}>Last Chance!</Text>
                         <Text style={styles.tutBinDesc}>
-                            Tap any photo here to <Text style={{fontWeight: '800', color: '#fff'}}>Restore</Text> it back to your gallery.
+                            Welcome to the Review Bin! Your items are safe here.
                         </Text>
                         <Text style={styles.tutBinDesc2}>
-                            <Text style={{fontWeight: '800', color: '#fff'}}>Long press</Text> a photo to preview it fullscreen and review it before deciding.
+                            Select items to restore, or let them automatically clear in 7 days.
                         </Text>
                         <Text style={[styles.tutBinDesc2, { marginTop: 12 }]}>
-                            Or, hit <Text style={{fontWeight: '800', color: '#ef4444'}}>Delete All</Text> at the bottom to permanently free up space.
+                            Hit <Text style={{fontWeight: '800', color: '#ef4444'}}>Delete All</Text> at the bottom to permanently free up space right now.
                         </Text>
                         
                         <ScalePress style={styles.tutBinBtn} onPress={completeBinTutorial}>
@@ -638,39 +537,84 @@ export default function BinScreen() {
                 </View>
             )}
 
-            {/* Bottom Banner Ad */}
-            <View style={{ position: 'absolute', bottom: Math.max(insets.bottom, 20) + 72, left: 0, right: 0, alignItems: 'center' }}>
-                <AppBannerAd
-                    unitId={AdUnits.BANNER}
-                    size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
-                    requestOptions={{ requestNonPersonalizedAdsOnly: true }}
-                />
-            </View>
+            {/* Bottom Banner Ad - Only for non-pro */}
+            {!isPro && (
+                <View style={{ position: 'absolute', bottom: Math.max(insets.bottom, 20), left: 0, right: 0, alignItems: 'center' }}>
+                    <AppBannerAd
+                        unitId={AdUnits.BANNER}
+                        size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                        requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+                    />
+                </View>
+            )}
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#fff0f5' },
-
+    container: { flex: 1, backgroundColor: '#FFFFFF' },
     header: {
-        paddingTop: 64, // Fallback
-        paddingHorizontal: 20, paddingBottom: 8,
-        flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
+        paddingHorizontal: 20, paddingBottom: 12,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        zIndex: 10,
     },
     title: { 
-        fontSize: 19, 
-        fontWeight: '900', 
-        color: '#1f2937', 
-        letterSpacing: -0.3 
+        fontSize: 24, 
+        fontFamily: 'System', 
+        fontWeight: '800',
+        color: '#1C1C1E', 
+        letterSpacing: -0.5,
     },
-
     subtitle: {
         fontSize: 13,
-        color: '#9ca3af',
-        fontWeight: '600',
-        marginTop: 0,
+        fontFamily: 'System',
+        color: '#A1A1AA',
+        fontWeight: '500'
     },
+    headerIconBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: 'rgba(0,0,0,0.05)',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 1,
+        shadowRadius: 4,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#f3f4f6',
+    },
+
+    mainBanner: {
+        padding: 20,
+        borderRadius: 20,
+        marginBottom: 16,
+        shadowColor: '#ff6b6b',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.25,
+        shadowRadius: 16,
+        elevation: 8,
+    },
+    mainBannerSub: { fontFamily: 'System', fontSize: 11, color: '#fff', opacity: 0.9, marginBottom: 4, letterSpacing: 1 },
+    mainBannerTitle: { fontFamily: 'System', fontSize: 32, color: '#fff', marginBottom: 2, letterSpacing: -1 },
+    mainBannerDesc: { fontFamily: 'System', fontSize: 13, color: '#fff', opacity: 0.95 },
+    
+    infoBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: '#ecfdf5',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#d1fae5',
+        marginBottom: 8,
+    },
+    infoBannerIconWrap: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#d1fae5', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+    infoBannerTitle: { fontFamily: 'System', fontSize: 14, color: '#059669', marginBottom: 2 },
+    infoBannerDesc: { fontFamily: 'System', fontSize: 12, color: '#4b5563', lineHeight: 18 },
+
     headerIconBtn: {
         width: 40,
         height: 40,
@@ -686,50 +630,6 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#f3f4f6',
     },
-    statBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff',
-        paddingHorizontal: 8,
-        paddingVertical: 5,
-        borderRadius: 8,
-        gap: 5,
-        borderWidth: 1,
-        borderColor: 'rgba(239,68,68,0.1)',
-        shadowColor: 'rgba(0,0,0,0.02)',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 1,
-        shadowRadius: 2,
-    },
-    statBadgeTxt: {
-        fontSize: 12,
-        fontWeight: '600',
-    },
-    totalStatsLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    totalStatsIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(99,102,241,0.08)', alignItems: 'center', justifyContent: 'center' },
-    totalStatsLbl: { fontFamily: 'DMSans_500Medium', color: '#6b7280', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
-    totalStatsVal: { fontFamily: 'DMSans_700Bold', color: '#6366f1', fontSize: 22, marginTop: -2 },
-    totalStatsRight: { alignItems: 'flex-end' },
-    totalStatsHint: { fontFamily: 'DMSans_700Bold', color: '#cbd5e1', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 },
-
-    storagePill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        marginHorizontal: 20,
-        marginTop: 12,
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        borderRadius: 20,
-        shadowColor: 'rgba(0,0,0,0.04)',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 1,
-        shadowRadius: 10,
-        elevation: 3,
-    },
-    storagePillTxt: { color: '#666', fontSize: 15, fontWeight: '600' },
-
     settingsOverlay: {
         flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
         justifyContent: 'center', alignItems: 'center',
@@ -745,7 +645,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
         marginBottom: 20,
     },
-    settingsTitle: { fontFamily: 'Syne_700Bold', fontSize: 24, color: '#1f2937' },
+    settingsTitle: { fontFamily: 'System', fontSize: 24, color: '#1f2937' },
     settingsClose: { padding: 4 },
     settingsList: { gap: 4 },
     settingsOption: {
@@ -758,7 +658,7 @@ const styles = StyleSheet.create({
         marginRight: 14,
     },
     settingsOptionTxt: {
-        flex: 1, fontFamily: 'DMSans_700Bold',
+        flex: 1, fontFamily: 'System',
         fontSize: 16, color: '#4b5563',
     },
     settingsDivider: {
@@ -767,79 +667,64 @@ const styles = StyleSheet.create({
     },
     versionTxt: {
         textAlign: 'center', marginTop: 20,
-        fontFamily: 'DMSans_500Medium', fontSize: 12, color: '#9ca3af',
-    },
-    hint: {
-        color: '#9ca3af', fontSize: 13,
-        textAlign: 'center', marginTop: 15, marginBottom: 4,
-        fontWeight: '500',
+        fontFamily: 'System', fontSize: 12, color: '#9ca3af',
     },
 
-    grid: { paddingHorizontal: 16, paddingTop: 15, paddingBottom: 120 },
-    row: { gap: 3, marginBottom: 3 },
-    gridItemWrap: { width: ITEM, height: ITEM, marginBottom: 3 },
+    grid: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 240 },
+    row: { gap: 12, marginBottom: 12 },
+    gridItemWrap: { width: ITEM, height: ITEM },
     gridItem: {
         width: '100%', height: '100%',
         borderRadius: 12, overflow: 'hidden',
     },
     thumb: { width: '100%', height: '100%' },
-    thumbGrad: { position: 'absolute', left: 0, right: 0, bottom: 0, height: ITEM * 0.45 },
     daysBadge: {
-        position: 'absolute', bottom: 8, right: 8,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10,
+        position: 'absolute', top: 8, right: 8,
+        paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
     },
-    daysBadgeRed: { backgroundColor: '#ef4444' },
-    daysTxt: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
+    daysTxt: { color: '#ffffff', fontSize: 11, fontFamily: 'System' },
 
     emptyWrap: { alignItems: 'center', paddingHorizontal: 40, marginTop: 40 },
     emptyIcon: {
         width: 100, height: 100, borderRadius: 50,
-        backgroundColor: '#ffffff',
-        shadowColor: 'rgba(0,0,0,0.05)', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 16, elevation: 4,
+        backgroundColor: '#F8F8FA',
+        borderWidth: 1, borderColor: '#EDEDED',
         alignItems: 'center', justifyContent: 'center', marginBottom: 20,
     },
-    emptyTitle: { fontSize: 22, fontWeight: '800', color: '#333', marginBottom: 10 },
-    emptySub: { fontSize: 15, color: '#999', textAlign: 'center', lineHeight: 22 },
+    emptyTitle: { fontSize: 22, fontWeight: '700', color: '#1C1C1E', marginBottom: 10 },
+    emptySub: { fontSize: 15, color: '#6B7280', textAlign: 'center', lineHeight: 22 },
+    
     footer: {
         position: 'absolute', 
-        bottom: 154, 
         left: 20, 
         right: 20,
-        flexDirection: 'row', 
+        flexDirection: 'column', 
         gap: 12,
         backgroundColor: 'transparent',
     },
     recoverBtn: {
-        flex: 1, 
+        width: '100%', 
         height: 52,
-        backgroundColor: '#fff',
-        borderRadius: 20,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 26,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 8,
-        borderWidth: 1.5,
-        borderColor: '#fef2f2',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 10,
-        elevation: 3,
+        borderWidth: 1, borderColor: '#EDEDED',
+        shadowColor: 'rgba(0,0,0,0.02)', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 8, elevation: 1,
     },
-    recoverTxt: { color: '#f43f5e', fontSize: 15, fontWeight: '700' },
+    recoverTxt: { fontFamily: 'System', color: '#6B7280', fontSize: 16, fontWeight: '600' },
     deleteBtn: { 
-        flex: 1, 
+        width: '100%', 
         height: 52,
-        backgroundColor: '#ff4757', // More vibrant red to look active
-        borderRadius: 20,
+        backgroundColor: '#FF3B30',
+        borderRadius: 26,
         flexDirection: 'row', 
         alignItems: 'center', 
         justifyContent: 'center', 
         gap: 8,
-        shadowColor: '#ef4444', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 16, elevation: 8 
     },
-    deleteTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
+    deleteTxt: { fontFamily: 'System', color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 
     // Celebration Popup
     celebOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
@@ -859,16 +744,16 @@ const styles = StyleSheet.create({
     },
     orbitContainer: { position: 'absolute', width: 96, height: 96, alignItems: 'center', justifyContent: 'flex-start' },
     orbitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444', shadowColor: '#ef4444', shadowOpacity: 0.6, shadowRadius: 6 },
-    celebTitle: { fontFamily: 'DMSans_700Bold', color: '#1f2937', fontSize: 22, marginBottom: 20, textAlign: 'center', lineHeight: 28 },
+    celebTitle: { fontFamily: 'System', color: '#1f2937', fontSize: 22, marginBottom: 20, textAlign: 'center', lineHeight: 28 },
 
     celebStorage: { alignItems: 'center', marginBottom: 32 },
-    celebStorageVal: { fontFamily: 'DMSans_700Bold', color: '#ef4444', fontSize: 44, letterSpacing: -1.5, lineHeight: 54 },
-    celebStorageUnit: { fontSize: 22, fontFamily: 'DMSans_700Bold' },
-    celebStorageLbl: { fontFamily: 'DMSans_700Bold', color: '#9ca3af', fontSize: 13, letterSpacing: 0.5, textTransform: 'uppercase', marginTop: 0 },
+    celebStorageVal: { fontFamily: 'System', color: '#ff6b6b', fontSize: 44, letterSpacing: -1.5, lineHeight: 54 },
+    celebStorageUnit: { fontSize: 22, fontFamily: 'System' },
+    celebStorageLbl: { fontFamily: 'System', color: '#9ca3af', fontSize: 13, letterSpacing: 0.5, textTransform: 'uppercase', marginTop: 0 },
 
-    celebPrimaryBtn: { width: '100%', borderRadius: 100, overflow: 'hidden', marginBottom: 12, shadowColor: '#ef4444', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 8 },
+    celebPrimaryBtn: { width: '100%', borderRadius: 100, overflow: 'hidden', marginBottom: 12, shadowColor: '#ff6b6b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 8 },
     celebPrimaryGrad: { paddingVertical: 18, alignItems: 'center', position: 'relative' },
-    celebPrimaryTxt: { fontFamily: 'DMSans_700Bold', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
+    celebPrimaryTxt: { fontFamily: 'System', color: '#fff', fontSize: 17, letterSpacing: 0.5 },
 
     // Bin Tutorial Styles
     tutBinOverlay: {

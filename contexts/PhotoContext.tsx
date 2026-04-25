@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef, useMemo } from 'react';
 import * as MediaLibrary from 'expo-media-library';
-import * as FileSystem from 'expo-file-system';
+import { Paths, File, Directory } from 'expo-file-system';
 import { Image } from 'expo-image';
 import { Platform, LogBox } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -10,7 +10,6 @@ import { Photo } from '../constants/photos';
 LogBox.ignoreLogs([
     'Encountered two children with the same key',
     'VirtualizedLists should never be nested',
-    'Possible Unhandled Promise Rejection'
 ]);
 
 export type SortMode = 'newest' | 'oldest' | 'largest';
@@ -68,7 +67,7 @@ interface PhotoContextType {
     swipeRight: () => void;
     swipeLeft: () => void;
     undo: () => void;
-    commitDeletions: (ids?: string[]) => Promise<void>;
+    commitDeletions: (ids?: string[]) => Promise<boolean>;
     restoreFromBin: (id: string) => void;
     startSwipingSession: (category: string, filter?: DateFilter | null) => Promise<void>;
     loadMore: () => Promise<void>;
@@ -78,6 +77,8 @@ interface PhotoContextType {
     totalDeletedPhotos: number;
     totalKeptPhotos: number;
     totalBinnedPhotos: number;
+    streak: number;
+    weeklySwipes: number;
     showIntro: boolean;
     setShowIntro: (show: boolean) => void;
     deepReset: () => Promise<void>;
@@ -102,6 +103,9 @@ const TOTAL_CLEARED_KEY = '@total_cleared_bytes_v2';
 const TOTAL_DELETED_KEY = '@total_deleted_photos_v2';
 const TOTAL_KEPT_KEY = '@overall_kept_photos_v1';
 const TOTAL_BINNED_KEY = '@overall_binned_photos_v1';
+const STREAK_KEY = '@swipe_streak_v1';
+const LAST_SWIPE_DATE_KEY = '@last_swipe_date_v1';
+const WEEKLY_SWIPES_KEY = '@weekly_swipes_v1';
 
 export function PhotoProvider({ children }: { children: ReactNode }) {
     const [permissionsGranted, setPermissionsGranted] = useState(false);
@@ -137,6 +141,8 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
     const [totalDeletedPhotos, setTotalDeletedPhotos] = useState(0);
     const [totalKeptPhotos, setTotalKeptPhotos] = useState(0);
     const [totalBinnedPhotos, setTotalBinnedPhotos] = useState(0);
+    const [streak, setStreak] = useState(0);
+    const [weeklySwipes, setWeeklySwipes] = useState(0);
     const [showIntro, setShowIntro] = useState(true);
     const [userToken, setUserToken] = useState<string | null>(null);
     const isGuest = userToken === 'guest';
@@ -175,14 +181,16 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
 
             // Load persistent bin + stats
             try {
-                const [storedBin, storedTotal, storedCount, storedKept, storedBinned, storedToken, storedCalTutorial] = await Promise.all([
+                const [storedBin, storedTotal, storedCount, storedKept, storedBinned, storedToken, storedCalTutorial, storedStreak, storedWeekly] = await Promise.all([
                     AsyncStorage.getItem(BIN_STORAGE_KEY),
                     AsyncStorage.getItem(TOTAL_CLEARED_KEY),
                     AsyncStorage.getItem(TOTAL_DELETED_KEY),
                     AsyncStorage.getItem(TOTAL_KEPT_KEY),
                     AsyncStorage.getItem(TOTAL_BINNED_KEY),
                     AsyncStorage.getItem('@auth_token_v1'),
-                    AsyncStorage.getItem('@calendar_tutorial_v1')
+                    AsyncStorage.getItem('@calendar_tutorial_v1'),
+                    AsyncStorage.getItem(STREAK_KEY),
+                    AsyncStorage.getItem(WEEKLY_SWIPES_KEY)
                 ]);
                 if (storedBin) {
                     try {
@@ -195,6 +203,8 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                 if (storedKept) setTotalKeptPhotos(parseInt(storedKept, 10) || 0);
                 if (storedBinned) setTotalBinnedPhotos(parseInt(storedBinned, 10) || 0);
                 if (storedToken) setUserToken(storedToken);
+                if (storedStreak) setStreak(parseInt(storedStreak, 10) || 0);
+                if (storedWeekly) setWeeklySwipes(parseInt(storedWeekly, 10) || 0);
                 _setCalendarTutorialSeen(storedCalTutorial === 'true');
             } catch (err) {
                 console.error('Persistence load error', err);
@@ -240,8 +250,9 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                         const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: false });
                         let sz = 0;
                         if (info.localUri || info.uri) {
-                            const fi = await FileSystem.getInfoAsync(info.localUri || info.uri);
-                            if (fi.exists && !fi.isDirectory) sz = (fi as any).size ?? 0;
+                            const file = new File(info.localUri || info.uri);
+                            const fi = file.info();
+                            if (fi.exists) sz = fi.size ?? 0;
                         }
                         total += sz || (asset.mediaType === 'video' ? 15 * 1024 * 1024 : 3 * 1024 * 1024);
                     } catch { /* ignore */ }
@@ -311,8 +322,8 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                 end = new Date(activeFilter.year + 1, 0, 1);
             }
             
-            base.createdAfter = start;
-            base.createdBefore = end;
+            base.createdAfter = start.getTime();
+            base.createdBefore = end.getTime();
             
             if (__DEV__) {
                 const label = activeFilter.day !== undefined 
@@ -322,7 +333,9 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                         : `${activeFilter.year}`;
                 console.log(`[PhotoContext] Fetching ${category} for ${label} (Sort: ${activeSort})`, {
                     start: start.toLocaleString(),
-                    end: end.toLocaleString()
+                    startMs: start.getTime(),
+                    end: end.toLocaleString(),
+                    endMs: end.getTime(),
                 });
             }
         }
@@ -432,17 +445,17 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         setHasMore(false);
     }, []);
 
-    const commitDeletions = useCallback(async (ids?: string[]) => {
+    const commitDeletions = useCallback(async (ids?: string[]): Promise<boolean> => {
         const toDelete = ids ?? binPhotos.map(p => p.id);
-        if (toDelete.length === 0) return;
+        if (toDelete.length === 0) return false;
 
         const bytesToDelete = ids
             ? binPhotos.filter(p => ids.includes(p.id)).reduce((acc, p) => acc + (p.fileSize || 0), 0)
             : binStorageBytes;
 
         try {
-            const deleted = await MediaLibrary.deleteAssetsAsync(toDelete);
-            if (deleted) {
+            const success = await MediaLibrary.deleteAssetsAsync(toDelete);
+            if (success) {
                 const newTotalBytes = totalClearedBytes + bytesToDelete;
                 const newTotalPhotos = totalDeletedPhotos + toDelete.length;
                 setTotalClearedBytes(newTotalBytes);
@@ -450,9 +463,12 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                 setBinPhotos(prev => ids ? prev.filter(p => !ids.includes(p.id)) : []);
                 if (!ids) setBinStorageBytes(0);
                 loadCategoryStats();
+                return true;
             }
+            return false;
         } catch (error) {
             console.error('Batch deletion error', error);
+            return false;
         }
     }, [binPhotos, binStorageBytes, totalClearedBytes, loadCategoryStats]);
 
@@ -464,6 +480,44 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
     const remainingCount = Math.max(0, photos.length - currentIndex);
     const canUndo = undoStack.length > 0;
 
+    const trackSwipeProgress = useCallback(async () => {
+        const now = new Date();
+        const todayStr = now.toDateString();
+        
+        try {
+            const lastDate = await AsyncStorage.getItem(LAST_SWIPE_DATE_KEY);
+            const currentStreak = parseInt(await AsyncStorage.getItem(STREAK_KEY) || '0', 10);
+            const currentWeekly = parseInt(await AsyncStorage.getItem(WEEKLY_SWIPES_KEY) || '0', 10);
+
+            let newStreak = currentStreak;
+            if (!lastDate) {
+                newStreak = 1;
+            } else {
+                const last = new Date(lastDate);
+                const diffDays = Math.floor((now.getTime() - last.getTime()) / (1000 * 60 * 60 * 24));
+                
+                if (diffDays === 1) {
+                    newStreak += 1;
+                } else if (diffDays > 1) {
+                    newStreak = 1;
+                }
+            }
+
+            const newWeekly = currentWeekly + 1;
+            
+            setStreak(newStreak);
+            setWeeklySwipes(newWeekly);
+            
+            await Promise.all([
+                AsyncStorage.setItem(LAST_SWIPE_DATE_KEY, todayStr),
+                AsyncStorage.setItem(STREAK_KEY, newStreak.toString()),
+                AsyncStorage.setItem(WEEKLY_SWIPES_KEY, newWeekly.toString())
+            ]);
+        } catch (err) {
+            console.error('Track progress error', err);
+        }
+    }, []);
+
     const swipeRight = useCallback(() => {
         const localIndex = indexRef.current;
         if (localIndex < 0 || localIndex >= photos.length) return;
@@ -473,10 +527,11 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
 
         const photo = photos[localIndex];
         setKeptPhotos(prev => [photo, ...prev]);
-        setUndoStack(prev => [...prev, { photo, action: 'keep' }]);
+        setUndoStack(prev => [...prev, { photo, action: 'keep' }].slice(-50));
         setSessionStats(s => ({ ...s, swiped: s.swiped + 1, kept: s.kept + 1 }));
         setTotalKeptPhotos(prev => prev + 1);
-    }, [photos]);
+        trackSwipeProgress();
+    }, [photos, trackSwipeProgress]);
 
     const swipeLeft = useCallback(() => {
         const localIndex = indexRef.current;
@@ -489,9 +544,10 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         const initialFileSize = photo.fileSize || (photo.mediaType === 'video' ? 15 * 1024 * 1024 : 3 * 1024 * 1024);
 
         // Synchronously update UI state to avoid any delay
-        setUndoStack(prev => [...prev, { photo, action: 'bin', fileSize: initialFileSize }]);
+        setUndoStack(prev => [...prev, { photo, action: 'bin', fileSize: initialFileSize }].slice(-50));
         setSessionStats(s => ({ ...s, swiped: s.swiped + 1, deleted: s.deleted + 1, mbFreed: s.mbFreed + (initialFileSize / (1024 * 1024)) }));
         setTotalBinnedPhotos(prev => prev + 1);
+        trackSwipeProgress();
 
         // Process heavy filesystem fetching in the background asynchronously
         // Optimized: Only fetch if we don't already have the size
@@ -502,8 +558,9 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
                     const info = await MediaLibrary.getAssetInfoAsync(photo.id, { shouldDownloadFromNetwork: false });
                     const localUri = info.localUri || info.uri;
                     if (localUri) {
-                        const fi = await FileSystem.getInfoAsync(localUri);
-                        if (fi.exists && !fi.isDirectory) actualFileSize = (fi as any).size ?? 0;
+                        const file = new File(localUri);
+                        const fi = file.info();
+                        if (fi.exists) actualFileSize = fi.size ?? 0;
                     }
                 } catch { /* ignore */ }
                 
@@ -554,7 +611,10 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
             '@bin_photos_v2',
             '@total_cleared_bytes_v2',
             '@total_deleted_photos_v2',
-            '@calendar_tutorial_v1'
+            '@calendar_tutorial_v1',
+            STREAK_KEY,
+            LAST_SWIPE_DATE_KEY,
+            WEEKLY_SWIPES_KEY
         ]);
         
         // Reset all in-memory state
@@ -568,6 +628,8 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         setTotalDeletedPhotos(0);
         setTotalKeptPhotos(0);
         setTotalBinnedPhotos(0);
+        setStreak(0);
+        setWeeklySwipes(0);
         setSessionStats({ swiped: 0, kept: 0, deleted: 0, mbFreed: 0 });
         setShowIntro(true);
         setUserToken(null);
@@ -586,6 +648,7 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         commitDeletions, restoreFromBin,
         startSwipingSession, loadMore, endSession, loadCategoryStats,
         totalClearedBytes, totalDeletedPhotos, totalKeptPhotos, totalBinnedPhotos,
+        streak, weeklySwipes,
         showIntro, setShowIntro, deepReset,
         userToken, isGuest, setUserToken,
         dateFilter, setDateFilter,
@@ -600,6 +663,7 @@ export function PhotoProvider({ children }: { children: ReactNode }) {
         commitDeletions, restoreFromBin,
         startSwipingSession, loadMore, endSession, loadCategoryStats,
         totalClearedBytes, totalDeletedPhotos, totalKeptPhotos, totalBinnedPhotos,
+        streak, weeklySwipes,
         showIntro, setShowIntro, userToken, isGuest, dateFilter,
         showCalendar, setShowCalendar, calendarTutorialSeen, setCalendarTutorialSeen
     ]);

@@ -31,7 +31,12 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+
+# Firebase secret config files (store these securely, never commit)
+google-services.json
+GoogleService-Info.plist
 
 # typescript
 *.tsbuildinfo

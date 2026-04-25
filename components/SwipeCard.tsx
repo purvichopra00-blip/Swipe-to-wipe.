@@ -1,5 +1,5 @@
 import React, { useState, useEffect, memo } from 'react';
-import { StyleSheet, View, Text, Dimensions, Platform } from 'react-native';
+import { StyleSheet, View, Text, Dimensions, Platform, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
@@ -26,9 +26,10 @@ interface SwipeCardProps {
     translateY?: SharedValue<number>;
     isTop: boolean;
     hasFilter?: boolean;
+    onExpand?: () => void;  // Expand button — only rendered on the top card
 }
 
-const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, isTop, hasFilter }: SwipeCardProps) => {
+const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, isTop, hasFilter, onExpand }: SwipeCardProps) => {
     const fallbackY = useSharedValue(0);
     const safeTranslateY = translateY ?? fallbackY;
     const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
@@ -49,7 +50,8 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, is
     }, [photo.id, photo.mediaType]);
 
     useEffect(() => {
-        if (isTop && photo.mediaType === 'video') {
+        if (photo.mediaType !== 'video') return;
+        if (isTop) {
             player.play();
         } else {
             player.pause();
@@ -196,34 +198,25 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, is
                     <Text style={[styles.stamp, styles.deleteStamp]}>DELETE</Text>
                 </Animated.View>
 
-                {/* Photo info */}
-                <View style={styles.infoContainer} pointerEvents="none">
-                    <View style={styles.topRow}>
-                        {!hasFilter && (
-                            <Text style={styles.date} numberOfLines={1}>
-                                {new Date(photo.creationTime || Date.now()).toLocaleDateString(undefined, {
-                                    weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
-                                })}
-                            </Text>
-                        )}
-                        <View style={styles.metaBadges}>
-                            {!!photo.fileSize && (
-                                <View style={styles.badge}>
-                                    <Text style={styles.badgeText}>{formatBytes(photo.fileSize)}</Text>
-                                </View>
-                            )}
-                            {!!(photo as any).duration && (
-                                <View style={styles.badge}>
-                                    <Ionicons name="play" size={10} color="#fff" />
-                                    <Text style={styles.badgeText}>{formatDuration((photo as any).duration)}</Text>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                    {!!photo.filename && (
-                        <Text style={styles.filename} numberOfLines={1}>{photo.filename}</Text>
-                    )}
+                {/* Bottom info overlay */}
+                <View style={styles.bottomInfoContainer} pointerEvents="none">
+                    <Text style={styles.bottomSubtitle} numberOfLines={1}>
+                        {!hasFilter ? new Date(photo.creationTime || Date.now()).toLocaleDateString(undefined, {
+                            day: 'numeric', month: 'short', year: 'numeric'
+                        }) : ''} {!!photo.fileSize ? `  ·  ${formatBytes(photo.fileSize)}` : ''}
+                    </Text>
                 </View>
+
+                {/* Expand button — bottom-right corner of the card, only on top card */}
+                {isTop && onExpand && (
+                    <Pressable
+                        style={styles.expandBtn}
+                        onPress={onExpand}
+                        hitSlop={12}
+                    >
+                        <Ionicons name="expand" size={18} color="#fff" />
+                    </Pressable>
+                )}
             </View>
         </Animated.View>
     );
@@ -241,19 +234,18 @@ const styles = StyleSheet.create({
         position: 'absolute',
         width: '100%',
         height: '100%',
-        // 3. Move shadows to wrapper View
-        shadowColor: 'rgba(0,0,0,0.12)',
-        shadowOffset: { width: 0, height: 12 },
+        // Soft, expansive shadows for larger cards
+        shadowColor: 'rgba(0,0,0,0.08)',
+        shadowOffset: { width: 0, height: 16 },
         shadowOpacity: 1,
-        shadowRadius: 24,
+        shadowRadius: 32,
         elevation: 10,
         backgroundColor: 'transparent',
     },
     card: {
         flex: 1,
-        borderRadius: 28,
+        borderRadius: 32,
         backgroundColor: '#ffffff',
-        // 3. Ensure card itself only has borderRadius + overflow
         overflow: 'hidden',
     },
     image: {
@@ -276,68 +268,52 @@ const styles = StyleSheet.create({
     },
     keepStampPos: {
         left: 36,
-        borderColor: '#22c55e',
+        borderColor: '#22C55E',
         transform: [{ rotate: '-15deg' }],
     },
     deleteStampPos: {
         right: 36,
-        borderColor: '#ef4444',
+        borderColor: '#FF3B30',
         transform: [{ rotate: '15deg' }],
     },
     stamp: {
-        fontFamily: 'Syne_800ExtraBold',
+        fontFamily: 'System',
+        fontWeight: '900',
         fontSize: 36,
         letterSpacing: 2,
         textTransform: 'uppercase',
     },
     keepStamp: {
-        color: '#22c55e',
+        color: '#22C55E',
     },
     deleteStamp: {
-        color: '#ef4444',
+        color: '#FF3B30',
     },
-    infoContainer: {
+    bottomInfoContainer: {
         position: 'absolute',
         bottom: 0, left: 0, right: 0,
-        padding: 24,
-    },
-    topRow: {
-        flexDirection: 'row',
+        padding: 20, paddingBottom: 28,
         alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 4,
     },
-    date: {
-        fontFamily: 'Syne_700Bold',
-        color: '#fff',
-        fontSize: 18,
-        letterSpacing: -0.5,
-        flex: 1,
-    },
-    metaBadges: {
-        flexDirection: 'row',
-        gap: 6,
-    },
-    badge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        gap: 4,
-    },
-    badgeText: {
-        fontFamily: 'DMSans_700Bold',
-        color: '#fff',
-        fontSize: 12,
-    },
-    filename: {
-        fontFamily: 'DMSans_500Medium',
-        color: 'rgba(255,255,255,0.85)',
+    bottomSubtitle: {
+        fontFamily: 'System',
+        color: 'rgba(255,255,255,0.95)',
         fontSize: 13,
+        fontWeight: '600',
+        letterSpacing: 0.5,
+    },
+    expandBtn: {
+        position: 'absolute',
+        bottom: 16,
+        right: 16,
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 

@@ -1,17 +1,19 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
     StyleSheet, View, Text, Dimensions,
-    NativeSyntheticEvent, NativeScrollEvent, Pressable
+    NativeSyntheticEvent, NativeScrollEvent, Pressable, StatusBar
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
     useAnimatedScrollHandler, useSharedValue, useAnimatedStyle,
-    interpolate, Extrapolation, withSpring, SharedValue
+    interpolate, Extrapolation, withSpring, SharedValue,
+    interpolateColor, withSequence, withDelay, withTiming, withRepeat, runOnJS
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library';
 import { logEvent, TrackEvents } from '../lib/analytics';
@@ -21,58 +23,228 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 export const ONBOARDING_COMPLETED_KEY = '@onboarding_completed_v4';
 const PERMISSIONS_GRANTED_KEY = '@permissions_granted_v1';
 
-// ─── Slide Data ────────────────────────────────────────────────────────────────
 const SLIDES = [
     {
         id: '1',
-        title: 'Your gallery is\ncluttered.',
-        description: 'Thousands of forgotten photos, screenshots and old memes eating your storage.',
-        icon: 'images-outline' as const,
-        colors: ['#ff8e53', '#ff6b6b'] as [string, string],
+        title: 'Your gallery\nis a mess.',
+        description: 'Let’s fix it in 2 minutes.',
+        variant: 'hook' as const,
+        icon: 'images' as const,
     },
     {
         id: '2',
-        title: 'Swipe to clean\nin minutes.',
-        description: 'Swipe right to keep. Swipe left to Review Bin. Nothing gets permanently deleted while you swipe.',
-        icon: 'swap-horizontal-outline' as const,
-        colors: ['#ff6b6b', '#f43f5e'] as [string, string],
+        title: 'Swipe. Done.',
+        description: 'Right = keep\nLeft = delete',
+        variant: 'mechanic' as const,
+        icon: 'swap-horizontal' as const,
     },
     {
         id: '3',
-        title: 'Your photos never\nleave your device.',
-        description: 'Everything is processed locally on your phone. No photos are uploaded or stored on any server. Ever.',
-        icon: 'shield-checkmark-outline' as const,
-        colors: ['#a78bfa', '#6366f1'] as [string, string],
+        title: 'Free up GBs\ninstantly.',
+        description: 'Most people delete 2,000+ photos.\nEverything stays on your device.',
+        variant: 'value' as const,
+        icon: 'flash' as const,
+    },
+    {
+        id: '4',
+        title: '100% Private.',
+        description: 'Nothing leaves your phone.',
+        variant: 'trust' as const,
+        icon: 'shield-checkmark' as const,
     },
 ];
+
+// ─── Animated Demo Card (for Mechanic Slide) ──────────────────────────────────
+const DemoCard = () => {
+    const translateX = useSharedValue(0);
+    const rotate = useSharedValue(0);
+    const opacity = useSharedValue(1);
+    const [imgIndex, setImgIndex] = useState(0);
+
+    const IMAGES = [
+        "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=400&q=80",
+        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80",
+        "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=400&q=80",
+        "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=400&q=80",
+        "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?auto=format&fit=crop&w=400&q=80",
+    ];
+
+    // Ghost hand values
+    const handX = useSharedValue(0);
+    const handOpacity = useSharedValue(0);
+    const handScale = useSharedValue(1.5);
+
+    useEffect(() => {
+        const DISTANCE = 120;
+        const SWIPE_SPEED = { damping: 12, stiffness: 150 };
+        const HOLD = 350;
+        const RESET_WAIT = 150;
+
+        translateX.value = withRepeat(
+            withSequence(
+                // Swipe Right (Keep)
+                withDelay(HOLD, withSpring(DISTANCE, SWIPE_SPEED)),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 }, () => {
+                    runOnJS(setImgIndex)((prev: number) => (prev + 1) % IMAGES.length);
+                })),
+                // Swipe Left (Delete)
+                withDelay(HOLD, withSpring(-DISTANCE, SWIPE_SPEED)),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 }, () => {
+                    runOnJS(setImgIndex)((prev: number) => (prev + 1) % IMAGES.length);
+                }))
+            ),
+            -1,
+            false
+        );
+
+        rotate.value = withRepeat(
+            withSequence(
+                withDelay(HOLD, withSpring(15, SWIPE_SPEED)),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 })),
+                withDelay(HOLD, withSpring(-15, SWIPE_SPEED)),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 }))
+            ),
+            -1,
+            false
+        );
+
+        handX.value = withRepeat(
+            withSequence(
+                withDelay(HOLD, withSpring(DISTANCE, SWIPE_SPEED)),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 })),
+                withDelay(HOLD, withSpring(-DISTANCE, SWIPE_SPEED)),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 }))
+            ),
+            -1,
+            false
+        );
+
+        handOpacity.value = withRepeat(
+            withSequence(
+                withTiming(1, { duration: 200 }), // Appear
+                withDelay(HOLD + 200, withTiming(0, { duration: 200 })), // Stay through swipe then fade
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 })),
+                withTiming(1, { duration: 200 }),
+                withDelay(HOLD + 200, withTiming(0, { duration: 200 })),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 }))
+            ),
+            -1,
+            false
+        );
+
+        handScale.value = withRepeat(
+            withSequence(
+                withTiming(1, { duration: 200 }), // "Press"
+                withDelay(HOLD + 200, withTiming(1.2, { duration: 100 })), // "Lift"
+                withDelay(RESET_WAIT, withTiming(1.5, { duration: 0 })),
+                withTiming(1, { duration: 200 }),
+                withDelay(HOLD + 200, withTiming(1.2, { duration: 100 })),
+                withDelay(RESET_WAIT, withTiming(1.5, { duration: 0 }))
+            ),
+            -1,
+            false
+        );
+
+        opacity.value = withRepeat(
+            withSequence(
+                withTiming(1, { duration: 0 }),
+                withDelay(HOLD + 200, withTiming(0, { duration: 200 })), // Fade out as it finishes swipe
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 })),
+                withTiming(1, { duration: 0 }),
+                withDelay(HOLD + 200, withTiming(0, { duration: 200 })),
+                withDelay(RESET_WAIT, withTiming(0, { duration: 0 }))
+            ),
+            -1,
+            false
+        );
+    }, []);
+
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: translateX.value },
+            { rotate: `${rotate.value}deg` }
+        ],
+        opacity: opacity.value
+    }));
+
+    const handAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: handX.value },
+            { scale: handScale.value },
+            { translateY: 40 }
+        ],
+        opacity: handOpacity.value
+    }));
+
+    const keepOpacity = useAnimatedStyle(() => ({
+        opacity: interpolate(translateX.value, [0, 40], [0, 1], Extrapolation.CLAMP)
+    }));
+
+    const deleteOpacity = useAnimatedStyle(() => ({
+        opacity: interpolate(translateX.value, [0, -40], [0, 1], Extrapolation.CLAMP)
+    }));
+
+    return (
+        <View style={styles.demoContainer}>
+            {/* Background stack */}
+            <View style={[styles.demoCard, { position: 'absolute', transform: [{ scale: 0.9 }, { translateY: -15 }], zIndex: 1 }]}>
+                <Image source={{ uri: IMAGES[(imgIndex + 2) % IMAGES.length] }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            </View>
+            <View style={[styles.demoCard, { position: 'absolute', transform: [{ scale: 0.95 }, { translateY: -8 }], zIndex: 2 }]}>
+                <Image source={{ uri: IMAGES[(imgIndex + 1) % IMAGES.length] }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            </View>
+
+            {/* Top animating card */}
+            <Animated.View style={[styles.demoCard, animatedStyle, { zIndex: 3, overflow: 'hidden' }]}>
+                <Image
+                    source={{ uri: IMAGES[imgIndex] }}
+                    style={StyleSheet.absoluteFill}
+                    contentFit="cover"
+                />
+                
+                {/* Embedded Overlays */}
+                <Animated.View style={[styles.demoStampBase, styles.demoKeepStampPos, keepOpacity]}>
+                    <Text style={[styles.demoStamp, styles.demoKeepStamp]}>KEEP</Text>
+                </Animated.View>
+                <Animated.View style={[styles.demoStampBase, styles.demoDeleteStampPos, deleteOpacity]}>
+                    <Text style={[styles.demoStamp, styles.demoDeleteStamp]}>DELETE</Text>
+                </Animated.View>
+
+                <View style={{ position: 'absolute', top: 12, right: 12, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.8)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="images" size={16} color="#FF6B6B" />
+                </View>
+            </Animated.View>
+
+            {/* Ghost Hand Indicator */}
+            <Animated.View style={[styles.ghostHand, handAnimatedStyle]}>
+                <View style={styles.ghostGlow} />
+            </Animated.View>
+        </View>
+    );
+};
 
 // ─── Slide Component ────────────────────────────────────────────────────────────
 const SlideItem = ({ slide, index, scrollX }: { slide: typeof SLIDES[0], index: number, scrollX: SharedValue<number> }) => {
     const inputRange = [(index - 1) * SCREEN_WIDTH, index * SCREEN_WIDTH, (index + 1) * SCREEN_WIDTH];
 
-    const textStyle = useAnimatedStyle(() => ({
+    const contentStyle = useAnimatedStyle(() => ({
         opacity: interpolate(scrollX.value, inputRange, [0, 1, 0], Extrapolation.CLAMP),
         transform: [{
-            translateY: interpolate(scrollX.value, inputRange, [40, 0, -40], Extrapolation.CLAMP)
-        }],
-    }));
-
-    const iconStyle = useAnimatedStyle(() => ({
-        transform: [{
-            scale: interpolate(scrollX.value, inputRange, [0.75, 1, 0.75], Extrapolation.CLAMP)
+            translateY: interpolate(scrollX.value, inputRange, [15, 0, -15], Extrapolation.CLAMP)
         }],
     }));
 
     return (
         <View style={styles.slide}>
-            {/* Icon */}
-            <Animated.View style={[styles.iconWrap, iconStyle]}>
-                <LinearGradient colors={slide.colors} style={StyleSheet.absoluteFillObject} />
-                <Ionicons name={slide.icon} size={68} color="#fff" />
-            </Animated.View>
+            <Animated.View style={[styles.contentContainer, contentStyle]}>
+                {slide.variant === 'mechanic' ? (
+                    <DemoCard />
+                ) : (
+                    <View style={styles.iconWrap}>
+                        <Ionicons name={slide.icon} size={slide.variant === 'hook' ? 72 : 60} color="#FF6B6B" />
+                    </View>
+                )}
 
-            {/* Text */}
-            <Animated.View style={[styles.textBlock, textStyle]}>
                 <Text style={styles.slideTitle}>{slide.title}</Text>
                 <Text style={styles.slideSubtitle}>{slide.description}</Text>
             </Animated.View>
@@ -86,12 +258,12 @@ const Dot = ({ index, scrollX }: { index: number, scrollX: SharedValue<number> }
         width: interpolate(
             scrollX.value,
             [(index - 1) * SCREEN_WIDTH, index * SCREEN_WIDTH, (index + 1) * SCREEN_WIDTH],
-            [8, 26, 8], Extrapolation.CLAMP
+            [6, 18, 6], Extrapolation.CLAMP
         ),
-        opacity: interpolate(
+        backgroundColor: interpolateColor(
             scrollX.value,
             [(index - 1) * SCREEN_WIDTH, index * SCREEN_WIDTH, (index + 1) * SCREEN_WIDTH],
-            [0.3, 1, 0.3], Extrapolation.CLAMP
+            ['#E5E5EA', '#FF6B6B', '#E5E5EA']
         ),
     }));
     return <Animated.View style={[styles.dot, style]} />;
@@ -105,8 +277,8 @@ function ScalePress({ children, onPress, style }: { children: React.ReactNode, o
     return (
         <AnimatedPressable
             onPress={onPress}
-            onPressIn={() => { scale.value = withSpring(0.94, { damping: 10, stiffness: 400 }); }}
-            onPressOut={() => { scale.value = withSpring(1, { damping: 10, stiffness: 400 }); }}
+            onPressIn={() => { scale.value = withSpring(0.96, { damping: 12, stiffness: 300 }); }}
+            onPressOut={() => { scale.value = withSpring(1, { damping: 12, stiffness: 300 }); }}
             style={[style, animStyle]}
         >
             {children}
@@ -138,48 +310,22 @@ export default function OnboardingScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
         if (!isLastSlide) {
-            // Go to next slide
             scrollRef.current?.scrollTo({ x: (currentIndex + 1) * SCREEN_WIDTH, animated: true });
             return;
         }
 
-        // Last slide: request permissions, then go to swipe screen
-        try {
-            const { status } = await MediaLibrary.requestPermissionsAsync();
-            if (status === 'granted') {
-                await AsyncStorage.multiSet([
-                    [ONBOARDING_COMPLETED_KEY, 'true'],
-                    [PERMISSIONS_GRANTED_KEY, 'true'],
-                    // Guest mode is the default — no login required
-                    ['@auth_token_v1', 'guest'],
-                ]);
-                logEvent(TrackEvents.ONBOARDING_COMPLETE);
-                router.replace('/(tabs)');
-            } else {
-                // Permission denied — still complete onboarding, go to swipe (it will prompt again)
-                await AsyncStorage.multiSet([
-                    [ONBOARDING_COMPLETED_KEY, 'true'],
-                    ['@auth_token_v1', 'guest'],
-                ]);
-                logEvent(TrackEvents.ONBOARDING_COMPLETE);
-                router.replace('/(tabs)');
-            }
-        } catch {
-            // Fallback: always proceed
-            await AsyncStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true');
-            router.replace('/(tabs)');
-        }
+        await AsyncStorage.multiSet([
+            [ONBOARDING_COMPLETED_KEY, 'true'],
+            ['@auth_token_v1', 'guest'],
+        ]);
+        logEvent(TrackEvents.ONBOARDING_COMPLETE);
+        router.replace('/permissions');
     }, [currentIndex, isLastSlide, router]);
 
     return (
-        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-            <LinearGradient colors={['#fff5f7', '#ffffff']} style={StyleSheet.absoluteFillObject} />
+        <View style={styles.container}>
+            <StatusBar barStyle="dark-content" />
 
-            {/* Decorative blobs */}
-            <View style={[styles.blob, { top: -180, left: -80, backgroundColor: 'rgba(255,107,107,0.05)' }]} />
-            <View style={[styles.blob, { bottom: -200, right: -100, backgroundColor: 'rgba(255,142,83,0.05)' }]} />
-
-            {/* Slides */}
             <Animated.ScrollView
                 ref={scrollRef as any}
                 horizontal
@@ -197,136 +343,180 @@ export default function OnboardingScreen() {
 
             {/* Footer */}
             <View style={styles.footer}>
-                {/* Pagination dots */}
                 <View style={styles.pagination}>
                     {SLIDES.map((_, i) => (
                         <Dot key={i} index={i} scrollX={scrollX} />
                     ))}
                 </View>
 
-                {/* CTA Button */}
                 <ScalePress style={styles.btnWrap} onPress={handleNext}>
-                    <LinearGradient
-                        colors={['#ff6b6b', '#ff8e53']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.btnGrad}
-                    >
+                    <View style={styles.btnContent}>
                         <Text style={styles.btnText}>
-                            {isLastSlide ? "Get Started — It's Free" : 'Continue'}
+                            {isLastSlide ? "Start Now →" : 'Continue'}
                         </Text>
-                        <Ionicons
-                            name={isLastSlide ? 'checkmark-circle' : 'arrow-forward'}
-                            size={20}
-                            color="#fff"
-                        />
-                    </LinearGradient>
+                    </View>
                 </ScalePress>
-
-                {/* Tiny privacy note on last screen */}
-                {isLastSlide && (
-                    <Text style={styles.privacyNote}>
-                        We'll ask for photo access on the next step.
-                    </Text>
-                )}
             </View>
-        </SafeAreaView>
+        </View>
     );
 }
 
 // ─── Styles ─────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#fff5f7' },
-    blob: { position: 'absolute', width: 380, height: 380, borderRadius: 190 },
+    container: { flex: 1, backgroundColor: '#FAFAFA' },
 
-    // Slide
     slide: {
         width: SCREEN_WIDTH,
-        minHeight: SCREEN_HEIGHT * 0.72,
         alignItems: 'center',
-        paddingTop: SCREEN_HEIGHT * 0.1,
-        paddingHorizontal: 36,
+        paddingHorizontal: 40,
+        justifyContent: 'center',
+    },
+    contentContainer: {
+        alignItems: 'center',
+        width: '100%',
     },
     iconWrap: {
-        width: 148,
-        height: 148,
-        borderRadius: 74,
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        backgroundColor: '#FFF1F1',
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 44,
-        overflow: 'hidden',
-        shadowColor: '#ff6b6b',
-        shadowOffset: { width: 0, height: 16 },
-        shadowOpacity: 0.22,
-        shadowRadius: 28,
-        elevation: 12,
+        marginBottom: 40,
     },
-    textBlock: { alignItems: 'center' },
     slideTitle: {
-        fontFamily: 'Syne_700Bold',
-        fontSize: 34,
-        color: '#1f2937',
+        fontFamily: 'System',
+        fontSize: 36,
+        color: '#1C1C1E',
         textAlign: 'center',
-        lineHeight: 43,
-        letterSpacing: -0.5,
-        marginBottom: 18,
+        lineHeight: 44,
+        letterSpacing: -1.2,
+        marginBottom: 12,
+        fontWeight: '800',
     },
     slideSubtitle: {
-        fontFamily: 'DMSans_500Medium',
-        fontSize: 17,
-        color: '#6b7280',
+        fontFamily: 'System',
+        fontSize: 18,
+        color: '#6B7280',
         textAlign: 'center',
-        lineHeight: 27,
+        lineHeight: 26,
+        fontWeight: '500',
     },
 
-    // Footer
+    // Demo Card Styles
+    demoContainer: {
+        width: 200,
+        height: 240,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 40,
+    },
+    demoCard: {
+        width: 140,
+        height: 180,
+        borderRadius: 20,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 20,
+        elevation: 5,
+        borderWidth: 1,
+        borderColor: '#EDEDED',
+    },
+    demoStampBase: {
+        position: 'absolute',
+        top: 20,
+        zIndex: 10,
+        borderWidth: 3,
+        borderRadius: 8,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        backgroundColor: 'rgba(255,255,255,0.8)',
+    },
+    demoKeepStampPos: {
+        left: 10,
+        borderColor: '#22C55E',
+        transform: [{ rotate: '-15deg' }],
+    },
+    demoDeleteStampPos: {
+        right: 10,
+        borderColor: '#FF3B30',
+        transform: [{ rotate: '15deg' }],
+    },
+    demoStamp: {
+        fontFamily: 'System',
+        fontWeight: '900',
+        fontSize: 16,
+        letterSpacing: 1,
+    },
+    demoKeepStamp: { color: '#22C55E' },
+    demoDeleteStamp: { color: '#FF3B30' },
+
+    ghostHand: {
+        position: 'absolute',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255, 255, 255, 0.5)',
+        borderWidth: 2,
+        borderColor: 'rgba(255, 255, 255, 0.9)',
+        zIndex: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 5,
+    },
+    ghostGlow: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        shadowColor: '#fff',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 1,
+        shadowRadius: 10,
+    },
+
     footer: {
-        paddingHorizontal: 28,
-        paddingBottom: 40,
-        paddingTop: 12,
+        paddingHorizontal: 32,
+        paddingBottom: 60,
     },
     pagination: {
         flexDirection: 'row',
         justifyContent: 'center',
-        gap: 8,
+        gap: 6,
         marginBottom: 32,
     },
     dot: {
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#ff6b6b',
+        height: 6,
+        borderRadius: 3,
     },
 
-    // Button
     btnWrap: {
-        borderRadius: 100,
+        borderRadius: 18,
+        backgroundColor: '#FF6B6B',
         overflow: 'hidden',
-        shadowColor: '#ff6b6b',
+        shadowColor: '#FF6B6B',
         shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.28,
-        shadowRadius: 18,
-        elevation: 10,
+        shadowOpacity: 0.25,
+        shadowRadius: 16,
+        elevation: 8,
     },
-    btnGrad: {
-        flexDirection: 'row',
+    btnContent: {
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 20,
-        gap: 12,
     },
     btnText: {
-        fontFamily: 'DMSans_700Bold',
-        color: '#ffffff',
+        fontFamily: 'System',
+        color: '#FFFFFF',
         fontSize: 18,
-        letterSpacing: 0.1,
-    },
-
-    // Privacy note
-    privacyNote: {
-        fontFamily: 'DMSans_400Regular',
-        color: '#9ca3af',
-        fontSize: 13,
-        textAlign: 'center',
-        marginTop: 14,
+        fontWeight: '700',
     },
 });

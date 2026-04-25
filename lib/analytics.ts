@@ -1,11 +1,9 @@
 import * as Amplitude from '@amplitude/analytics-react-native';
-import Constants from 'expo-constants';
 
-// Amplitude API Key
-const AMPLITUDE_API_KEY = "587cd09bda71f1d0ffac00aad79c8fd1";
+const AMPLITUDE_API_KEY = process.env.EXPO_PUBLIC_AMPLITUDE_API_KEY ?? '';
 
 export const initAnalytics = () => {
-    if (!AMPLITUDE_API_KEY || AMPLITUDE_API_KEY.includes('YOUR_')) {
+    if (!AMPLITUDE_API_KEY || AMPLITUDE_API_KEY.includes('YOUR_') || AMPLITUDE_API_KEY.includes('your-')) {
         console.warn('Amplitude API Key is missing. Analytics will not be active.');
         return;
     }
