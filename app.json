@@ -21,7 +21,6 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
         "NSPhotoLibraryAddUsageDescription": "Swipe to Wipe needs permission to save recovered photos back to your gallery.",
-        "NSUserTrackingUsageDescription": "This identifier will be used to deliver personalized ads to you and help support the free features of Swipe to Wipe.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [

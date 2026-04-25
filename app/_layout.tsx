@@ -18,7 +18,7 @@ import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@
 import { initAds } from '../lib/ads';
 import { IAPProvider } from '../contexts/IAPContext';
 import { initAnalytics, logEvent, TrackEvents } from '../lib/analytics';
-import { requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
+
 import { 
     registerForPushNotificationsAsync, 
     addNotificationReceivedListener, 
@@ -54,10 +54,7 @@ function RootLayout() {
                 // Safe analytics init — never block boot
                 try { initAnalytics(); } catch (e) { console.warn('Analytics init failed', e); }
 
-                // ATT permission for iOS AdMob (non-blocking)
-                if (Platform.OS === 'ios') {
-                    try { await requestTrackingPermissionsAsync(); } catch (e) { console.warn('ATT failed', e); }
-                }
+
 
                 // Wait a moment for native bridge to settle on New Arch
                 await new Promise(resolve => setTimeout(resolve, 500));
