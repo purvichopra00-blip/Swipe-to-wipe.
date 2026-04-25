@@ -111,12 +111,18 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
 
     const proceedWithPurchase = async () => {
         if (!product) {
-            Alert.alert('Store Loading', 'We are still connecting to the App Store. Please try again in a moment.');
+            // Force a manual retry of the IAP connection if it's missing
+            try {
+                const retrySuccess = await purchaseProduct(); // This will trigger the connection warming
+                if (!retrySuccess) {
+                    Alert.alert('Store Connection', 'We are attempting to reconnect to the App Store. Please try again in a few seconds.');
+                }
+            } catch (e) {
+                Alert.alert('Store Loading', 'We are still connecting to the App Store. Please try again in a moment.');
+            }
             return;
         }
         await purchaseProduct();
-        // NOTE: We no longer onClose() or Alert here. 
-        // Success is handled globally in IAPContext listener.
     };
 
     const handleRestore = async () => {
