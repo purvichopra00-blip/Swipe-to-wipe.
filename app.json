@@ -16,12 +16,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.purvichopra.swipetowipe",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Swipe to Wipe needs access to your gallery so you can choose which photos to delete to save storage.",
         "NSPhotoLibraryAddUsageDescription": "Swipe to Wipe needs permission to save recovered photos back to your gallery.",
-        "NSUserTrackingUsageDescription": "Allows us to provide a more personalized experience and support the app with relevant ads.",
+        "NSUserTrackingUsageDescription": "This identifier will be used to deliver personalized ads to you and help support the free features of Swipe to Wipe.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [

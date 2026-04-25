@@ -102,6 +102,9 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
                             await IAP.finishTransaction({ purchase, isConsumable: false });
                             setIsPro(true);
                             await AsyncStorage.setItem(IAP_KEYS.IS_PRO, 'true');
+                            
+                            // ✅ SUCCESS HANDLING MOVED HERE (Apple Requirement)
+                            Alert.alert('Success', 'Pro unlocked! You now have unlimited swipes and no ads. 🚀');
                         } catch (err) {
                             console.warn('finishTransaction failed', err);
                         }
@@ -110,8 +113,8 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
 
                 purchaseErrorSubscription = IAP.purchaseErrorListener((error: IAP.PurchaseError) => {
                     if (error.code !== 'E_USER_CANCELLED') {
-                        // Suppress background errors to avoid annoying the user
                         console.log('Purchase Error Listener:', error.message);
+                        Alert.alert('Purchase Error', error.message);
                     }
                 });
 
@@ -214,8 +217,8 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
             // andFinishTransactionIOS: false tells IAP NOT to finish it automatically
             // we finish it in the purchaseUpdatedListener
             if (IAP.requestPurchase) {
-                const purchase = await IAP.requestPurchase({ sku: PRODUCT_ID, andFinishTransactionIOS: false });
-                if (purchase) return true;
+                await IAP.requestPurchase({ sku: PRODUCT_ID, andFinishTransactionIOS: false });
+                return true; // Flow started successfully
             }
         } catch (err: any) {
             if (err.code !== 'E_USER_CANCELLED') {

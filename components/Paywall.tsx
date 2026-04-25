@@ -6,9 +6,9 @@ import {
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { 
-    FadeInDown, SlideInDown, useSharedValue, useAnimatedStyle, 
-    withRepeat, withSequence, withTiming, Easing 
+import Animated, {
+    FadeInDown, SlideInDown, useSharedValue, useAnimatedStyle,
+    withRepeat, withSequence, withTiming, Easing
 } from 'react-native-reanimated';
 import { useIAP } from '../contexts/IAPContext';
 import { usePhotos } from '../contexts/PhotoContext';
@@ -24,9 +24,20 @@ interface PaywallProps {
 }
 
 export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallProps) {
-    const { product, purchaseProduct, restorePurchases, isLoading, addRewardSwipes } = useIAP();
+    const { isPro, product, purchaseProduct, restorePurchases, isLoading, addRewardSwipes } = useIAP();
     const { userToken } = usePhotos();
     const router = useRouter();
+
+    // ✅ AUTO-CLOSE WHEN PRO (Apple Success Flow)
+    useEffect(() => {
+        if (isPro && visible) {
+            // Short delay so the user can see the "Success" alert before it slides away
+            const timer = setTimeout(() => {
+                onClose();
+            }, 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [isPro, visible]);
 
     const [rewardedAd, setRewardedAd] = useState<any>(null);
     const [isAdLoading, setIsAdLoading] = useState(false);
@@ -34,7 +45,7 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
     useEffect(() => {
         if (!visible || reason !== 'limit') return;
         let isMounted = true;
-        
+
         const ad = createSafeRewarded(AdUnits.REWARDED);
         if (!ad) return;
 
@@ -99,12 +110,13 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
     };
 
     const proceedWithPurchase = async () => {
-        const success = await purchaseProduct();
-        if (success) {
-            onClose();
-            // Optional: Success message
-            Alert.alert('Welcome to Pro! 🚀', 'Your lifetime access has been activated.');
+        if (!product) {
+            Alert.alert('Store Loading', 'We are still connecting to the App Store. Please try again in a moment.');
+            return;
         }
+        await purchaseProduct();
+        // NOTE: We no longer onClose() or Alert here. 
+        // Success is handled globally in IAPContext listener.
     };
 
     const handleRestore = async () => {
@@ -186,7 +198,7 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
                         <View style={styles.header}>
                             {reason === 'limit' && (
                                 <View style={styles.limitBadge}>
-                                    <Ionicons name="alert-circle" size={14} color="#FF6B6B" style={{marginRight: 4}} />
+                                    <Ionicons name="alert-circle" size={14} color="#FF6B6B" style={{ marginRight: 4 }} />
                                     <Text style={styles.limitBadgeText}>Daily Limit Reached</Text>
                                 </View>
                             )}
@@ -232,13 +244,13 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
                                         isLoading && styles.ctaDisabled
                                     ]}
                                     onPress={handlePurchase}
-                                    disabled={isLoading}
+                                    disabled={isLoading || !product}
                                 >
-                                    <View style={[styles.ctaGradient, { backgroundColor: '#FF6B6B' }]}>
+                                    <View style={[styles.ctaGradient, { backgroundColor: '#FF6B6B', opacity: (!product || isLoading) ? 0.7 : 1 }]}>
                                         {isLoading ? (
                                             <ActivityIndicator color="#fff" />
                                         ) : (
-                                            <Text style={styles.ctaText}>Unlock Unlimited Cleaning</Text>
+                                            <Text style={styles.ctaText}>{!product ? 'Connecting Store...' : 'Unlock Unlimited Cleaning'}</Text>
                                         )}
                                     </View>
                                 </Pressable>
