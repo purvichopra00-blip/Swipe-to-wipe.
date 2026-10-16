@@ -1,5 +1,7 @@
 import 'react-native-gesture-handler/jestSetup';
 
+jest.mock('react-native-worklets', () => jest.requireActual('react-native-worklets/src/mock'));
+
 // Mock Reanimated
 require('react-native-reanimated').setUpTests();
 
@@ -21,6 +23,10 @@ jest.mock('expo-router', () => ({
 
 // Mock Expo Media Library
 jest.mock('expo-media-library', () => ({
+  MediaType: { photo: 'photo', video: 'video' },
+  SortBy: { creationTime: 'creationTime' },
+  getAlbumsAsync: jest.fn(() => Promise.resolve([])),
+  deleteAssetsAsync: jest.fn(() => Promise.resolve(true)),
   getAssetsAsync: jest.fn(() => Promise.resolve({ assets: [], hasNextPage: false })),
   getAssetInfoAsync: jest.fn(() => Promise.resolve({ uri: 'mock-uri' })),
   requestPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
