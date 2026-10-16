@@ -213,9 +213,9 @@ export default function BinScreen() {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
                     setIsDeleting(true);
                     const bytes = photo.fileSize || 0;
-                    await commitDeletions([photo.id]);
+                    const success = await commitDeletions([photo.id]);
                     setIsDeleting(false);
-                    showCelebration(1, bytes);
+                    if (success) showCelebration(1, bytes);
                 },
             },
         ]);
@@ -298,7 +298,7 @@ export default function BinScreen() {
                             <Ionicons name="search" size={18} color="#A1A1AA" />
                         </View>
                     </ScalePress>
-                    <Text style={styles.subtitle}>{binPhotos.length.toLocaleString()} items · {fmt(binStorageBytes)}</Text>
+                    <Text style={styles.subtitle}>{binPhotos.length.toLocaleString()} items · ~{fmt(binStorageBytes)} estimated</Text>
                 </View>
 
                 <View style={{ flex: 1, alignItems: 'flex-end' }}>
@@ -351,8 +351,8 @@ export default function BinScreen() {
                                 <Ionicons name="trash-outline" size={18} color="#fff" />
                                 <Text style={styles.deleteTxt}>
                                     {selectedIds.size > 0 
-                                        ? `Delete Selected · ${fmt(Array.from(selectedIds).reduce((acc, id) => acc + (binPhotos.find(b => b.id === id)?.fileSize || 0), 0))}` 
-                                        : `Delete All · ${fmt(binStorageBytes)}`}
+                                        ? `Delete Selected · ~${fmt(Array.from(selectedIds).reduce((acc, id) => acc + (binPhotos.find(b => b.id === id)?.fileSize || 0), 0))}`
+                                        : `Delete All · ~${fmt(binStorageBytes)}`}
                                 </Text>
                             </>
                         )}
@@ -425,11 +425,11 @@ export default function BinScreen() {
                         {deletedStats.bytes > 0 ? (
                             <View style={styles.celebStorage}>
                                 <Text style={styles.celebStorageVal}>{fmt(deletedStats.bytes).split(' ')[0]} <Text style={styles.celebStorageUnit}>{fmt(deletedStats.bytes).split(' ')[1]}</Text></Text>
-                                <Text style={styles.celebStorageLbl}>Storage Recovered</Text>
+                                <Text style={styles.celebStorageLbl}>Estimated deleted size</Text>
                             </View>
                         ) : (
                             <View style={styles.celebStorage}>
-                                <Text style={styles.celebStorageLbl}>No significant storage recovered</Text>
+                                <Text style={styles.celebStorageLbl}>Deletion completed</Text>
                             </View>
                         )}
 

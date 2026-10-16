@@ -34,28 +34,28 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, is
     const safeTranslateY = translateY ?? fallbackY;
     const [resolvedVideoUri, setResolvedVideoUri] = useState<string | null>(null);
     
-    const player = useVideoPlayer(photo.mediaType === 'video' ? (resolvedVideoUri || photo.url) : null, (p) => {
+    const player = useVideoPlayer(isTop && photo.mediaType === 'video' ? (resolvedVideoUri || photo.url) : null, (p) => {
         p.loop = true;
         p.muted = true;
     });
 
     useEffect(() => {
-        if (photo.mediaType === 'video' && !resolvedVideoUri) {
-            MediaLibrary.getAssetInfoAsync(photo.id).then(info => {
-                setResolvedVideoUri(info.localUri || info.uri);
-            }).catch(err => {
-                console.warn('Failed to resolve video URI:', err);
-            });
+        let active = true;
+        setResolvedVideoUri(null);
+        if (isTop && photo.mediaType === 'video') {
+            // Never fetch/download an offscreen video's iCloud original.
+            MediaLibrary.getAssetInfoAsync(photo.id, { shouldDownloadFromNetwork: false }).then(info => {
+                if (active) setResolvedVideoUri(info.localUri || info.uri);
+            }).catch(() => {});
         }
-    }, [photo.id, photo.mediaType]);
+        return () => { active = false; };
+    }, [photo.id, photo.mediaType, isTop]);
 
     useEffect(() => {
         if (photo.mediaType !== 'video') return;
-        if (isTop) {
-            player.play();
-        } else {
-            player.pause();
-        }
+        if (isTop) player.play();
+        else player.pause();
+        // useVideoPlayer owns release on unmount; don't call a released player.
     }, [isTop, player, photo.mediaType]);
 
     // 1. Optimized Animation: Only animate the top card
@@ -173,7 +173,8 @@ const SwipeCard = memo(({ photo, index, totalVisible, translateX, translateY, is
                         source={{ uri: photo.url }}
                         style={styles.image}
                         contentFit="cover"
-                        cachePolicy="memory-disk"
+                        cachePolicy="disk"
+                        allowDownscaling
                         recyclingKey={photo.id}
                         transition={0}
                         placeholder={{ blurhash: 'L05#_6~qj[fQj[fQj[fQj[fQj[fQ' }}

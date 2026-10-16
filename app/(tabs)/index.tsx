@@ -174,7 +174,7 @@ const SettingsModal = ({
                             <Ionicons name="cloud-done-outline" size={18} color="#34C759" />
                         </View>
                         <Text style={s.settingsStatVal}>{fmt(totalClearedBytes)}</Text>
-                        <Text style={s.settingsStatLbl}>Storage Freed</Text>
+                        <Text style={s.settingsStatLbl}>Estimated deleted size</Text>
                     </View>
                     <View style={{ width: 1, height: 40, backgroundColor: '#EDEDED' }} />
                     <View style={s.settingsStatItem}>
@@ -270,7 +270,7 @@ export default function SwipeScreen() {
     const {
         photos, currentIndex, currentPhoto, remainingCount,
         swipeRight, swipeLeft, undo, canUndo, sessionStats,
-        isLoadingSession, startSwipingSession, loadCategoryStats,
+        isLoadingSession, scannedCount, sessionError, hasMore, loadMore, startSwipingSession, loadCategoryStats,
         sortMode, setSortMode, endSession, permissionsGranted,
         categoryCounts, totalClearedBytes, totalDeletedPhotos, totalKeptPhotos, totalBinnedPhotos,
         streak, weeklySwipes,
@@ -302,6 +302,9 @@ export default function SwipeScreen() {
 
     const logoScale = useSharedValue(1);
 
+    const [calScope, setCalScope] = useState<'day' | 'month' | 'year'>('month');
+    const [calMediaType, setCalMediaType] = useState<'all' | 'photo' | 'video'>('all');
+    const [oldestLibraryYear, setOldestLibraryYear] = useState(new Date().getFullYear() - 15);
     const [calViewDate, setCalViewDate] = useState(new Date());
     const [calSelectedDay, setCalSelectedDay] = useState<number | null>(new Date().getDate());
     const [calMonthStats, setCalMonthStats] = useState({ photos: 0, distinctDays: new Set<number>() });
@@ -316,6 +319,7 @@ export default function SwipeScreen() {
             createdAfter: new Date(year, month, 1).getTime(),
             createdBefore: new Date(year, month + 1, 1).getTime(),
             first: 500,
+            mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
         }).then(result => {
             if (!active) return;
             const uniqueDays = new Set<number>();
@@ -324,18 +328,23 @@ export default function SwipeScreen() {
             });
             setCalMonthStats({ photos: result.totalCount || 0, distinctDays: uniqueDays });
 
-            setCalSelectedDay(prev => {
-                const today = new Date();
-                const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
-                if (isCurrentMonth) return today.getDate();
-                if (uniqueDays.size > 0 && (!prev || !uniqueDays.has(prev))) {
-                    return Math.max(...Array.from(uniqueDays));
-                }
-                return prev || 1;
-            });
+            setCalSelectedDay(prev => Math.min(prev || 1, new Date(year, month + 1, 0).getDate()));
         }).catch(() => { });
         return () => { active = false; };
     }, [showCalendar, calViewDate]);
+
+    useEffect(() => {
+        if (!showCalendar) return;
+        let active = true;
+        MediaLibrary.getAssetsAsync({
+            first: 1,
+            mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+            sortBy: [[MediaLibrary.SortBy.creationTime, true]],
+        }).then(result => {
+            if (active && result.assets[0]) setOldestLibraryYear(new Date(result.assets[0].creationTime).getFullYear());
+        }).catch(() => {});
+        return () => { active = false; };
+    }, [showCalendar]);
 
     const navMonth = (delta: number) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -363,7 +372,7 @@ export default function SwipeScreen() {
     const { calendarTutorialSeen, setCalendarTutorialSeen } = usePhotos();
     const [isPickerMode, setIsPickerMode] = useState(false);
     const [localCalTutVisible, setLocalCalTutVisible] = useState(false);
-    const years = Array.from({ length: 16 }, (_, i) => new Date().getFullYear() - i);
+    const years = Array.from({ length: Math.max(1, new Date().getFullYear() - oldestLibraryYear + 1) }, (_, i) => new Date().getFullYear() - i);
     const months = ['Jan ❄️', 'Feb 💌', 'Mar 🍀', 'Apr 🌸', 'May 🌿', 'Jun ☀️', 'Jul 🍦', 'Aug 🌊', 'Sep 🍂', 'Oct 🎃', 'Nov 🧣', 'Dec 🎄'];
 
     const selectYearMonth = (year: number, month?: number) => {
@@ -534,7 +543,8 @@ export default function SwipeScreen() {
     const enterSession = (category: string) => {
         activeCatRef.current = category;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        startSwipingSession(category);
+        setDateFilter(null);
+        startSwipingSession(category, null);
         setShowIntro(false);
     };
 
@@ -614,8 +624,8 @@ export default function SwipeScreen() {
     const selectSort = useCallback(async (mode: SortMode) => {
         setSortMode(mode);
         closeSort();
-        await startSwipingSession(activeCatRef.current);
-    }, [setSortMode, startSwipingSession]);
+        await startSwipingSession(activeCatRef.current, dateFilter, mode);
+    }, [setSortMode, startSwipingSession, dateFilter]);
 
     const openDatePicker = () => {
         setShowCalendar(true);
@@ -1012,7 +1022,7 @@ export default function SwipeScreen() {
                             <View style={s.impactStatsRow}>
                                 <View style={s.impactStatItem}>
                                     <Text style={s.impactVal}>{fmt(totalClearedBytes).split(' ')[0]}<Text style={s.impactUnit}>{fmt(totalClearedBytes).split(' ')[1]}</Text></Text>
-                                    <Text style={s.impactSub}>Storage Freed</Text>
+                                    <Text style={s.impactSub}>Estimated deleted size</Text>
                                 </View>
                                 <View style={s.impactDivider} />
                                 <View style={s.impactStatItem}>
@@ -1093,7 +1103,7 @@ export default function SwipeScreen() {
                                 <Ionicons name="calendar" size={24} color="#fff" />
                             </LinearGradient>
                             <Text style={s.homeCatTitle}>Calendar</Text>
-                            <Text style={s.homeCatSub}>{dateFilter ? `${dateFilter.day}/${dateFilter.month}/${dateFilter.year}` : 'Pick a specific date'}</Text>
+                            <Text style={s.homeCatSub}>{dateFilter ? `${dateFilter.year}${dateFilter.month !== undefined ? ` · ${months[dateFilter.month]}` : ''}` : 'Pick a year, month or day'}</Text>
                         </ScalePress>
                     </View>
                 </View>
@@ -1149,8 +1159,19 @@ export default function SwipeScreen() {
                 {isLoadingSession ? (
                     <View style={s.emptyState}>
                         <ActivityIndicator size="large" color="#FF6B6B" />
-                        <Text style={[s.emptySub, { marginTop: 20 }]}>Gathering your media...</Text>
+                        <Text style={[s.emptySub, { marginTop: 20 }]}>Preparing your library{scannedCount > 0 ? ` · ${scannedCount.toLocaleString()} scanned` : ''}...</Text>
+                        <Pressable onPress={handleBack}><Text style={{ color: '#FF6B6B', padding: 20 }}>Cancel</Text></Pressable>
                     </View>
+                ) : sessionError ? (
+                    <View style={s.emptyState}>
+                        <Text style={s.emptySub}>{sessionError}</Text>
+                        <Pressable accessibilityRole="button" onPress={() => hasMore ? loadMore() : startSwipingSession(activeCatRef.current, dateFilter)}>
+                            <Text style={{ color: '#FF6B6B', padding: 20 }}>Retry</Text>
+                        </Pressable>
+                        <Pressable onPress={handleBack}><Text>Back to Dashboard</Text></Pressable>
+                    </View>
+                ) : !currentPhoto && hasMore ? (
+                    <View style={s.emptyState}><ActivityIndicator color="#FF6B6B" /><Text>Loading more media...</Text></View>
                 ) : currentPhoto ? (
                     <>
                         <View style={s.cardContainerWrapper}>
@@ -1413,7 +1434,7 @@ export default function SwipeScreen() {
                         {sessionStats.mbFreed > 0 ? (
                             <View style={s.celebStorage}>
                                 <Text style={s.celebStorageVal}>{sessionStats.mbFreed.toFixed(1)} <Text style={s.celebStorageUnit}>MB</Text></Text>
-                                <Text style={s.celebStorageLbl}>Storage Freed</Text>
+                                <Text style={s.celebStorageLbl}>Estimated space selected</Text>
                             </View>
                         ) : (
                             <View style={s.celebStorage}>
@@ -1427,7 +1448,7 @@ export default function SwipeScreen() {
                                     <Ionicons name="trash" size={16} color="#ff8e53" />
                                 </View>
                                 <Text style={[s.celebStatNum, { color: '#ff8e53' }]}>{sessionStats.deleted}</Text>
-                                <Text style={s.celebStatLabel}>Deleted</Text>
+                                <Text style={s.celebStatLabel}>Moved to Bin</Text>
                             </View>
                             <View style={[s.celebStatRow, { backgroundColor: 'rgba(255,107,107,0.1)', borderColor: 'rgba(255,107,107,0.2)' }]}>
                                 <View style={[s.celebStatIcon, { backgroundColor: 'rgba(255,107,107,0.2)' }]}>
@@ -1518,16 +1539,38 @@ export default function SwipeScreen() {
                                         <Ionicons name="calendar-outline" size={24} color="#ff6b6b" />
                                     </View>
                                     <Text style={{ fontFamily: 'System', fontSize: 24, color: '#1f2937', marginBottom: 4 }}>By Date</Text>
-                                    <Text style={{ fontFamily: 'System', fontSize: 14, color: '#6b7280', textAlign: 'center' }}>Swipe through memories by the day you took them</Text>
+                                    <Text style={{ fontFamily: 'System', fontSize: 14, color: '#6b7280', textAlign: 'center' }}>Review a whole year, month, or a specific day</Text>
                                 </View>
 
                                 {/* 2. Banner */}
                                 <View style={{ backgroundColor: 'rgba(255,107,107,0.1)', borderRadius: 20, padding: 20, marginBottom: 24 }}>
-                                    <Text style={{ fontFamily: 'System', fontSize: 12, color: '#ff6b6b', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>THIS MONTH</Text>
+                                    <Text style={{ fontFamily: 'System', fontSize: 12, color: '#ff6b6b', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>SELECTED MONTH</Text>
                                     <Text style={{ fontFamily: 'System', fontSize: 20, color: '#1f2937', marginBottom: 6 }}>
-                                        {calMonthStats.photos} photos · {calMonthStats.distinctDays.size} days
+                                        {calMonthStats.photos} photos / videos
                                     </Text>
-                                    <Text style={{ fontFamily: 'System', fontSize: 14, color: '#6b7280' }}>Tap a day to review those photos.</Text>
+                                    <Text style={{ fontFamily: 'System', fontSize: 14, color: '#6b7280' }}>Choose a year, month or day below. Dots mark days in the loaded sample.</Text>
+                                </View>
+
+                                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                                    {(['year', 'month', 'day'] as const).map(scope => (
+                                        <Pressable key={scope} accessibilityRole="button"
+                                            accessibilityLabel={`Review entire ${scope}`}
+                                            accessibilityState={{ selected: calScope === scope }}
+                                            onPress={() => setCalScope(scope)}
+                                            style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: calScope === scope ? '#FFE3E3' : '#F8F8FA' }}>
+                                            <Text style={{ textAlign: 'center' }}>{scope === 'day' ? 'Day' : `Whole ${scope}`}</Text>
+                                        </Pressable>
+                                    ))}
+                                </View>
+                                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                                    {(['all', 'photo', 'video'] as const).map(type => (
+                                        <Pressable key={type} accessibilityRole="button"
+                                            accessibilityState={{ selected: calMediaType === type }}
+                                            onPress={() => setCalMediaType(type)}
+                                            style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: calMediaType === type ? '#FFE3E3' : '#F8F8FA' }}>
+                                            <Text style={{ textAlign: 'center' }}>{type === 'all' ? 'All media' : type === 'photo' ? 'Photos' : 'Videos'}</Text>
+                                        </Pressable>
+                                    ))}
                                 </View>
 
                                 {/* 3. Navigation Header */}
@@ -1628,6 +1671,7 @@ export default function SwipeScreen() {
                                                                     onPress={() => {
                                                                         if (isValid) {
                                                                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                                            setCalScope('day');
                                                                             setCalSelectedDay(num);
                                                                         }
                                                                     }}
@@ -1656,8 +1700,8 @@ export default function SwipeScreen() {
                                 )}
 
                                 {/* 6. High-Intent Global CTA */}
-                                <ScalePress style={[s.globalJumpBtn, !calSelectedDay && { opacity: 0.5 }]} onPress={() => {
-                                    if (!calSelectedDay) return;
+                                <ScalePress style={[s.globalJumpBtn, calScope === 'day' && !calSelectedDay && { opacity: 0.5 }]} onPress={() => {
+                                    if (calScope === 'day' && !calSelectedDay) return;
 
                                     // Allow jump as long as they have swipes left
                                     if (!isPro && !canSwipe('photo')) {
@@ -1670,7 +1714,13 @@ export default function SwipeScreen() {
                                     }
 
                                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                    const filter = { year: calViewDate.getFullYear(), month: calViewDate.getMonth(), day: calSelectedDay, mediaType: 'all' as const };
+                                    const filter = {
+                                        year: calViewDate.getFullYear(),
+                                        month: calScope === 'year' ? undefined : calViewDate.getMonth(),
+                                        day: calScope === 'day' ? calSelectedDay! : undefined,
+                                        mediaType: calMediaType,
+                                    };
+                                    activeCatRef.current = 'By Date';
                                     setDateFilter(filter);
                                     setShowCalendar(false);
                                     setShowIntro(false); // CRITICAL: Ensure we transition to the swiping screen
@@ -1680,7 +1730,8 @@ export default function SwipeScreen() {
                                 }}>
                                     <LinearGradient colors={['#ff6b6b', '#ff8e53']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.globalJumpGrad}>
                                         <Text style={s.globalJumpTxt}>
-                                            Review {calViewDate.toLocaleString('default', { month: 'short' })} {calSelectedDay || ''} →
+                                            Review {calScope === 'year' ? calViewDate.getFullYear()
+                                                : `${calViewDate.toLocaleString('default', { month: 'short' })}${calScope === 'day' ? ` ${calSelectedDay}` : ''} ${calViewDate.getFullYear()}`} →
                                         </Text>
                                     </LinearGradient>
                                 </ScalePress>
