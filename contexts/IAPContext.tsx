@@ -3,8 +3,8 @@ import { Platform, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as IAP from 'react-native-iap';
 import Constants from 'expo-constants';
+import { PRO_PRODUCT_ID as PRODUCT_ID, PREVIEW_PRODUCT, isCompletedProPurchase } from '../lib/purchases';
 
-const PRODUCT_ID = 'pro_upgrade';
 const IAP_KEYS = {
     IS_PRO: '@iap_is_pro_v1',
     DAILY_PHOTO_COUNT: '@iap_daily_photo_count_v1',
@@ -29,6 +29,7 @@ interface IAPContextType {
     photoCount: number;
     videoCount: number;
     resetDailyLimits: () => Promise<void>;
+    addRewardSwipes: () => Promise<void>;
 }
 
 const IAPContext = createContext<IAPContextType | undefined>(undefined);
@@ -40,26 +41,49 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
     const [product, setProduct] = useState<IAP.Product | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
-    // Initial load: Local state + StoreKit Connection
+    // v15 uses StoreKit 2 events and displayPrice, not the old receipt/getProducts APIs.
     useEffect(() => {
-        let purchaseUpdateSubscription: any;
-        let purchaseErrorSubscription: any;
+        let active = true;
+        let connected = false;
+        let retryTimer: ReturnType<typeof setTimeout> | undefined;
+        let purchaseUpdateSubscription: ReturnType<typeof IAP.purchaseUpdatedListener> | undefined;
+        let purchaseErrorSubscription: ReturnType<typeof IAP.purchaseErrorListener> | undefined;
+        const inFlight = new Set<string>();
+        const completed = new Set<string>();
+        let purchaseEventVersion = 0;
+        const preview = Constants.appOwnership === 'expo';
+
+        const fetchProduct = async (): Promise<boolean> => {
+            try {
+                const products = await IAP.fetchProducts({ skus: [PRODUCT_ID], type: 'in-app' });
+                const candidates: IAP.ProductOrSubscription[] = products ?? [];
+                const pro = candidates.find((item): item is IAP.Product => item.type === 'in-app' && item.id === PRODUCT_ID);
+                if (active && pro) setProduct(pro);
+                return !!pro;
+            } catch (error) {
+                console.warn('Product fetch failed', error);
+                return false;
+            }
+        };
+        const retryProduct = async (remaining: number) => {
+            if (!active) return;
+            const ok = await fetchProduct();
+            if (!ok && active && remaining > 0) {
+                retryTimer = setTimeout(() => { void retryProduct(remaining - 1); }, 3000);
+            }
+        };
 
         const init = async () => {
             try {
-                // 1. Load local persistence (fast recovery)
                 const [storedIsPro, storedPhotoCount, storedVideoCount, storedLastReset] = await Promise.all([
                     AsyncStorage.getItem(IAP_KEYS.IS_PRO),
                     AsyncStorage.getItem(IAP_KEYS.DAILY_PHOTO_COUNT),
                     AsyncStorage.getItem(IAP_KEYS.DAILY_VIDEO_COUNT),
                     AsyncStorage.getItem(IAP_KEYS.LAST_RESET_DATE),
                 ]);
-
-                if (storedIsPro === 'true') {
-                    setIsPro(true);
-                }
-
-                // 2. Handle daily reset
+                if (!active) return;
+                // Retain cached entitlement while offline; successful store sync below is authoritative.
+                if (storedIsPro === 'true') setIsPro(true);
                 const today = new Date().toISOString().split('T')[0];
                 if (storedLastReset !== today) {
                     setPhotoCount(0);
@@ -70,111 +94,85 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
                         AsyncStorage.setItem(IAP_KEYS.LAST_RESET_DATE, today),
                     ]);
                 } else {
-                    setPhotoCount(storedPhotoCount ? parseInt(storedPhotoCount, 10) : 0);
-                    setVideoCount(storedVideoCount ? parseInt(storedVideoCount, 10) : 0);
+                    setPhotoCount(Number.parseInt(storedPhotoCount || '0', 10) || 0);
+                    setVideoCount(Number.parseInt(storedVideoCount || '0', 10) || 0);
                 }
+                if (!active) return;
+                if (preview) {
+                    setProduct(PREVIEW_PRODUCT);
+                    return;
+                }
+                if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
 
-                // Safely bypass in Expo Go or Web environments
-                const isExpoGo = Constants.appOwnership === 'expo';
-                if (isExpoGo) {
-                    console.warn('IAP bypassed: Running in Expo Go (Mocking Product Data)');
-                    setProduct({
-                        productId: PRODUCT_ID,
-                        title: 'Swipe to Wipe Pro',
-                        description: 'Unlimited swipes and ad-free experience.',
-                        price: '4.99',
-                        currency: 'USD',
-                        localizedPrice: '$4.99'
-                    } as any);
-                    setIsLoading(false);
+                try {
+                    connected = await IAP.initConnection();
+                } catch (error) {
+                    console.warn('First IAP connection failed, retrying...', error);
+                    if (!active) return;
+                    connected = await IAP.initConnection();
+                }
+                if (!connected) throw new Error('The store connection is unavailable.');
+                if (!active) {
+                    await IAP.endConnection();
+                    connected = false;
                     return;
                 }
 
-                // 3. Initialize IAP Connection with aggressive retry
-                try {
-                    await IAP.initConnection();
-                } catch (connErr) {
-                    console.warn('First connection failed, retrying...', connErr);
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    await IAP.initConnection(); // Retry once immediately
-                }
-
-                // 4. Set up Listeners (Production Best Practice)
-                purchaseUpdateSubscription = IAP.purchaseUpdatedListener(async (purchase: IAP.Purchase) => {
-                    const receipt = purchase.transactionReceipt;
-                    if (receipt) {
-                        try {
-                            // Non-consumables should be finished immediately on success
-                            await IAP.finishTransaction({ purchase, isConsumable: false });
+                purchaseUpdateSubscription = IAP.purchaseUpdatedListener(async (purchase) => {
+                    if (!active || !isCompletedProPurchase(purchase)) return;
+                    const transaction = purchase.id;
+                    if (inFlight.has(transaction) || completed.has(transaction)) return;
+                    inFlight.add(transaction);
+                    purchaseEventVersion++;
+                    try {
+                        // Persist the native completed entitlement before acknowledging the transaction.
+                        await AsyncStorage.setItem(IAP_KEYS.IS_PRO, 'true');
+                        await IAP.finishTransaction({ purchase, isConsumable: false });
+                        completed.add(transaction);
+                        if (active) {
                             setIsPro(true);
-                            await AsyncStorage.setItem(IAP_KEYS.IS_PRO, 'true');
-                            
-                            // ✅ SUCCESS HANDLING MOVED HERE (Apple Requirement)
                             Alert.alert('Success', 'Pro unlocked! You now have unlimited swipes and no ads. 🚀');
-                        } catch (err) {
-                            console.warn('finishTransaction failed', err);
                         }
+                    } catch (error) {
+                        console.warn('Purchase completion failed; native redelivery can retry.', error);
+                    } finally {
+                        inFlight.delete(transaction);
                     }
                 });
-
-                purchaseErrorSubscription = IAP.purchaseErrorListener((error: IAP.PurchaseError) => {
-                    if (error.code !== 'E_USER_CANCELLED') {
-                        console.log('Purchase Error Listener:', error.message);
+                purchaseErrorSubscription = IAP.purchaseErrorListener((error) => {
+                    if (active && error.code !== IAP.ErrorCode.UserCancelled) {
                         Alert.alert('Purchase Error', error.message);
                     }
                 });
 
-                // 5. Sync Entitlements (Server Check Fallback)
-                // This ensures if user clears storage or reinstalls, they keep Pro status
-                if (Platform.OS === 'ios' && IAP.getAvailablePurchases) {
+                // A store/network error does not revoke an offline cached entitlement.
+                try {
+                    const versionBeforeSync = purchaseEventVersion;
                     const purchases = await IAP.getAvailablePurchases();
-                    const hasPro = purchases.some(p => p.productId === PRODUCT_ID);
-                    if (hasPro) {
-                        setIsPro(true);
-                        await AsyncStorage.setItem(IAP_KEYS.IS_PRO, 'true');
+                    const hasPro = purchases.some(isCompletedProPurchase);
+                    if (active && versionBeforeSync === purchaseEventVersion) {
+                        await AsyncStorage.setItem(IAP_KEYS.IS_PRO, String(hasPro));
+                        if (active) setIsPro(hasPro);
                     }
+                } catch (error) {
+                    console.warn('Entitlement sync unavailable; retaining local cache.', error);
                 }
-
-                // 6. Aggressive Product Fetch
-                const fetchProduct = async () => {
-                    try {
-                        if (Platform.OS === 'ios' && IAP.getProducts) {
-                            const products = await IAP.getProducts({ skus: [PRODUCT_ID] });
-                            if (products && products.length > 0) {
-                                setProduct(products[0]);
-                                return true;
-                            }
-                        }
-                    } catch (e) {
-                        console.log('Product fetch failed', e);
-                    }
-                    return false;
-                };
-
-                const fetchSuccess = await fetchProduct();
-                if (!fetchSuccess) {
-                    console.log('⚠️ Initial fetch failed, starting background retry cycle');
-                    // Retry every 3 seconds for 3 times
-                    let attempts = 0;
-                    const interval = setInterval(async () => {
-                        attempts++;
-                        const ok = await fetchProduct();
-                        if (ok || attempts >= 3) clearInterval(interval);
-                    }, 3000);
-                }
-            } catch (err) {
-                console.error('IAP Initialization Error:', err);
+                if (active) await retryProduct(3);
+            } catch (error) {
+                console.warn('IAP initialization failed', error);
             } finally {
-                setIsLoading(false);
+                if (active) setIsLoading(false);
             }
         };
-
-        init();
-
+        void init();
         return () => {
-            if (purchaseUpdateSubscription) purchaseUpdateSubscription.remove();
-            if (purchaseErrorSubscription) purchaseErrorSubscription.remove();
-            IAP.endConnection();
+            active = false;
+            if (retryTimer) clearTimeout(retryTimer);
+            purchaseUpdateSubscription?.remove();
+            purchaseErrorSubscription?.remove();
+            if (connected) {
+                void IAP.endConnection().catch(error => console.warn('IAP disconnect failed', error));
+            }
         };
     }, []);
 
@@ -228,27 +226,28 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
         await AsyncStorage.setItem(IAP_KEYS.DAILY_VIDEO_COUNT, newVideo.toString());
     }, [photoCount, videoCount]);
 
-    const purchaseProduct = async () => {
+    const purchaseProduct = async (): Promise<boolean> => {
         try {
             setIsLoading(true);
-            const isExpoGo = Constants.appOwnership === 'expo';
-            if (isExpoGo) {
-                Alert.alert('Expo Go MOCK', 'Simulated purchase successful! You are now Pro.');
+            if (Constants.appOwnership === 'expo') {
+                Alert.alert('Expo Go Preview', 'Simulated purchase — no charge or saved Pro entitlement.');
                 setIsPro(true);
-                AsyncStorage.setItem(IAP_KEYS.IS_PRO, 'true');
                 return true;
             }
-
-            // requestPurchase returns the purchase object on iOS
-            // andFinishTransactionIOS: false tells IAP NOT to finish it automatically
-            // we finish it in the purchaseUpdatedListener
-            if (IAP.requestPurchase) {
-                await IAP.requestPurchase({ sku: PRODUCT_ID, andFinishTransactionIOS: false });
-                return true; // Flow started successfully
-            }
-        } catch (err: any) {
-            if (err.code !== 'E_USER_CANCELLED') {
-                Alert.alert('Purchase Failed', err.message);
+            if (Platform.OS !== 'ios' && Platform.OS !== 'android') return false;
+            // Resolving this call only means the flow started. Only completed purchase events unlock Pro.
+            await IAP.requestPurchase({
+                type: 'in-app',
+                request: {
+                    apple: { sku: PRODUCT_ID, andDangerouslyFinishTransactionAutomatically: false },
+                    google: { skus: [PRODUCT_ID] },
+                },
+            });
+            return true;
+        } catch (error: unknown) {
+            const purchaseError = error as Partial<IAP.PurchaseError>;
+            if (purchaseError.code !== IAP.ErrorCode.UserCancelled) {
+                Alert.alert('Purchase Failed', purchaseError.message || 'Could not start the purchase. Please try again.');
             }
         } finally {
             setIsLoading(false);
@@ -256,31 +255,28 @@ export function IAPProvider({ children }: { children: React.ReactNode }) {
         return false;
     };
 
-    const restorePurchases = async () => {
+    const restorePurchases = async (): Promise<boolean> => {
         try {
             setIsLoading(true);
-            const isExpoGo = Constants.appOwnership === 'expo';
-            if (isExpoGo) {
-                Alert.alert('Expo Go MOCK', 'Simulated restore successful!');
+            if (Constants.appOwnership === 'expo') {
+                Alert.alert('Expo Go Preview', 'Simulated restore — no saved Pro entitlement.');
                 setIsPro(true);
-                AsyncStorage.setItem(IAP_KEYS.IS_PRO, 'true');
                 return true;
             }
-
-            if (IAP.getAvailablePurchases) {
-                const purchases = await IAP.getAvailablePurchases();
-                const hasPro = purchases.some(p => p.productId === PRODUCT_ID);
-                if (hasPro) {
-                    setIsPro(true);
-                    await AsyncStorage.setItem(IAP_KEYS.IS_PRO, 'true');
-                    Alert.alert('Success', 'Your purchases have been restored!');
-                    return true;
-                } else {
-                    Alert.alert('No Purchases Found', 'We couldn\'t find any previous purchases for this account.');
-                }
+            if (Platform.OS !== 'ios' && Platform.OS !== 'android') return false;
+            // User-initiated restore triggers StoreKit sync; ordinary startup does not prompt.
+            await IAP.restorePurchases();
+            const purchases = await IAP.getAvailablePurchases();
+            const hasPro = purchases.some(isCompletedProPurchase);
+            await AsyncStorage.setItem(IAP_KEYS.IS_PRO, String(hasPro));
+            setIsPro(hasPro);
+            if (hasPro) {
+                Alert.alert('Success', 'Your purchases have been restored!');
+                return true;
             }
-        } catch (err: any) {
-            Alert.alert('Restore Failed', err.message);
+            Alert.alert('No Purchases Found', 'We could not find a completed Pro purchase for this store account.');
+        } catch (error: unknown) {
+            Alert.alert('Restore Failed', error instanceof Error ? error.message : 'Could not restore purchases. Please try again.');
         } finally {
             setIsLoading(false);
         }

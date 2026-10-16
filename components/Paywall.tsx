@@ -250,7 +250,7 @@ export default function Paywall({ visible, onClose, reason = 'limit' }: PaywallP
                         {/* CTA SECTION */}
                         <View style={styles.ctaSection}>
                             <View style={styles.priceContainer}>
-                                <Text style={styles.priceText}>{product?.localizedPrice || '$2.99'}</Text>
+                                <Text style={styles.priceText}>{product?.displayPrice || 'Price unavailable'}</Text>
                                 <Text style={styles.priceSubtext}>One-time · Lifetime access</Text>
                             </View>
 
