@@ -571,21 +571,6 @@ const styles = StyleSheet.create({
         color: '#A1A1AA',
         fontWeight: '500'
     },
-    headerIconBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: '#fff',
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: 'rgba(0,0,0,0.05)',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 1,
-        shadowRadius: 4,
-        elevation: 2,
-        borderWidth: 1,
-        borderColor: '#f3f4f6',
-    },
 
     mainBanner: {
         padding: 20,
