@@ -1,7 +1,5 @@
 import 'react-native-gesture-handler/jestSetup';
 
-jest.mock('react-native-worklets', () => jest.requireActual('react-native-worklets/src/mock'));
-
 // Mock Reanimated
 require('react-native-reanimated').setUpTests();
 
