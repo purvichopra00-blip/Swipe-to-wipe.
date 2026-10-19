@@ -785,7 +785,7 @@ export default function SwipeScreen() {
     }));
 
     const handleSwipeRight = useCallback(() => {
-        if (!canSwipe(currentPhoto?.mediaType || 'photo')) {
+        if (!canSwipe(currentPhoto?.mediaType === 'video' ? 'video' : 'photo')) {
             setPaywallReason('limit');
             setPaywallVisible(true);
             // Re-center the card
@@ -804,7 +804,7 @@ export default function SwipeScreen() {
         translateX.value = 0; // Reset FIRST to prevent new card from appearing off-screen
         translateY.value = 0;
 
-        trackSwipe(currentPhoto?.mediaType || 'photo');
+        trackSwipe(currentPhoto?.mediaType === 'video' ? 'video' : 'photo');
         setSwipesThisSession(prev => {
             const next = prev + 1;
             if (next === 10) runOnJS(setShowRollModal)(true);
@@ -826,7 +826,7 @@ export default function SwipeScreen() {
     }, [swipeRight, translateX, showAd, canSwipe, trackSwipe, currentPhoto, adsShownThisSession]);
 
     const handleSwipeLeft = useCallback(() => {
-        if (!canSwipe(currentPhoto?.mediaType || 'photo')) {
+        if (!canSwipe(currentPhoto?.mediaType === 'video' ? 'video' : 'photo')) {
             setPaywallReason('limit');
             setPaywallVisible(true);
             // Re-center the card
@@ -846,7 +846,7 @@ export default function SwipeScreen() {
         translateX.value = 0; // Reset FIRST
         translateY.value = 0;
 
-        trackSwipe(currentPhoto?.mediaType || 'photo');
+        trackSwipe(currentPhoto?.mediaType === 'video' ? 'video' : 'photo');
         setSwipesThisSession(prev => {
             const next = prev + 1;
             if (next === 10) runOnJS(setShowRollModal)(true);
@@ -1892,6 +1892,48 @@ const s = StyleSheet.create({
     },
     sortIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 16 },
     sortOptTxt: { fontFamily: 'System', fontSize: 17, color: '#1C1C1E', fontWeight: '500' },
+
+    // Previously referenced but undefined tutorial/celebration styles.
+    ghostHandLabels: { position: 'absolute', top: '18%', left: 0, right: 0, alignItems: 'center' },
+    ghostLabel: { position: 'absolute', alignItems: 'center' },
+    ghostLabelPill: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 12 },
+    ghostLabelTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+    tutArrowContainer: { position: 'absolute', bottom: 180, right: 48, alignItems: 'center' },
+    tutArrow: { fontSize: 64, color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 4 }, textShadowRadius: 8 },
+
+    celebOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+    celebCard: {
+        width: '100%', maxWidth: 440, backgroundColor: '#fff', borderRadius: 32,
+        paddingHorizontal: 28, paddingTop: 30, paddingBottom: 24, alignItems: 'center',
+        overflow: 'hidden', borderWidth: 1, borderColor: '#FFE4E4',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.15, shadowRadius: 24, elevation: 12,
+    },
+    celebShimmer: { position: 'absolute', top: 0, left: 24, right: 24, height: 1, backgroundColor: '#FFE4E4' },
+    celebIconWrap: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#FFF1F1', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+    celebEmoji: { fontSize: 40 },
+    orbitContainer: { position: 'absolute', width: 96, height: 96, alignItems: 'center', justifyContent: 'flex-start' },
+    orbitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF6B6B' },
+    celebTitle: { fontSize: 22, fontWeight: '700', color: '#1C1C1E', textAlign: 'center', marginBottom: 16 },
+    celebStorage: { alignItems: 'center', marginBottom: 20 },
+    celebStorageVal: { fontSize: 38, fontWeight: '700', color: '#FF6B6B' },
+    celebStorageUnit: { fontSize: 20 },
+    celebStorageLbl: { fontSize: 12, color: '#6B7280', marginTop: 4, textAlign: 'center' },
+    celebStatsCol: { width: '100%', gap: 10, marginBottom: 20 },
+    celebStatRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 16, padding: 12, gap: 12 },
+    celebStatIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    celebStatNum: { fontSize: 20, fontWeight: '700' },
+    celebStatLabel: { flex: 1, fontSize: 14, color: '#4B5563' },
+    progressWrap: { width: '100%', marginBottom: 20 },
+    progressHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+    progressLbl: { fontSize: 12, color: '#6B7280' },
+    progressNum: { fontSize: 12, fontWeight: '600', color: '#1C1C1E' },
+    progressTrack: { height: 6, borderRadius: 3, backgroundColor: '#F1F1F1', overflow: 'hidden' },
+    progressFill: { height: '100%', backgroundColor: '#FF6B6B', borderRadius: 3 },
+    celebPrimaryBtn: { width: '100%', borderRadius: 28, overflow: 'hidden', marginBottom: 12 },
+    celebPrimaryGrad: { paddingVertical: 16, alignItems: 'center' },
+    celebPrimaryTxt: { color: '#fff', fontSize: 17, fontWeight: '700' },
+    celebSecBtn: { padding: 10 },
+    celebSecTxt: { color: '#FF6B6B', fontSize: 15, fontWeight: '600' },
 
     ghostHandContainer: { position: 'absolute', width: '100%', height: '100%', zIndex: 1000, elevation: 20, alignItems: 'center', justifyContent: 'center' },
     ghostHandCircle: {

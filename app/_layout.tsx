@@ -36,8 +36,8 @@ function RootLayout() {
     const [splashHidden, setSplashHidden] = useState(false);
     const [isOffline, setIsOffline] = useState(false);
     const [expoPushToken, setExpoPushToken] = useState<string | undefined>('');
-    const notificationListener = useRef<Notifications.Subscription>();
-    const responseListener = useRef<Notifications.Subscription>();
+    const notificationListener = useRef<Notifications.Subscription | null>(null);
+    const responseListener = useRef<Notifications.Subscription | null>(null);
 
     const [fontsLoaded, fontError] = useFonts({
         DMSans_400Regular,
